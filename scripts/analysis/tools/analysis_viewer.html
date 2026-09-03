@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>台词解析查看器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f7;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --ink: #182231;
+      --muted: #718096;
+      --line: #d9e1ec;
+      --blue: #2563eb;
+      --blue-soft: #e8f0ff;
+      --gold-soft: #fff8e7;
+      --gold-line: #f2d18a;
+      --danger: #b42318;
+      --shadow: 0 16px 42px rgba(25, 45, 80, .08);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+      overflow: hidden;
+    }
+    button, input, select { font: inherit; }
+    button, select, input { outline-color: var(--blue); }
+    .app { height: 100%; display: flex; flex-direction: column; }
+    .topbar {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      min-height: 76px; padding: 15px 24px; background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { margin-right: 12px; white-space: nowrap; }
+    .brand h1 { margin: 0; font-size: 20px; letter-spacing: .02em; }
+    .brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .control { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+    select, input[type="search"] {
+      height: 36px; border: 1px solid var(--line); border-radius: 8px;
+      background: var(--panel-soft); color: var(--ink); padding: 0 11px;
+    }
+    select { min-width: 190px; }
+    input[type="search"] { width: min(31vw, 360px); }
+    button {
+      height: 36px; border: 1px solid var(--line); border-radius: 8px;
+      background: var(--panel); color: var(--ink); padding: 0 13px; cursor: pointer;
+    }
+    button:hover { border-color: #9db7e9; background: var(--blue-soft); }
+    .status { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .main { min-height: 0; flex: 1; display: grid; grid-template-columns: 345px minmax(0, 1fr); gap: 16px; padding: 16px 20px 20px; }
+    .sidebar, .detail-wrap { min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+    .sidebar { display: flex; flex-direction: column; overflow: hidden; }
+    .sidebar-head { padding: 15px 17px 11px; border-bottom: 1px solid var(--line); }
+    .sidebar-head strong { font-size: 14px; }
+    .sidebar-head span { color: var(--muted); font-size: 12px; margin-left: 8px; }
+    .record-list { min-height: 0; overflow: auto; padding: 8px; }
+    .record { display: block; width: 100%; text-align: left; height: auto; min-height: 57px; margin: 0 0 5px; padding: 9px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; }
+    .record:hover { background: var(--panel-soft); border-color: var(--line); }
+    .record.active { background: var(--blue-soft); border-color: #b6cef9; }
+    .record-line { display: flex; align-items: center; gap: 8px; }
+    .record-index { color: var(--muted); font: 12px/1 "Consolas", monospace; min-width: 32px; }
+    .record-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .record-preview { margin: 7px 0 0 40px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex: 0 0 auto; }
+    .dot.missing { background: #c5cbd5; }
+    .empty { padding: 28px 15px; text-align: center; color: var(--muted); font-size: 13px; }
+    .detail-wrap { overflow: hidden; }
+    .detail { height: 100%; overflow: auto; padding: 22px 27px 35px; }
+    .meta { display: flex; justify-content: space-between; gap: 18px; align-items: baseline; padding-bottom: 11px; border-bottom: 1px solid var(--line); }
+    .meta h2 { margin: 0; font-size: 18px; }
+    .meta-code { color: var(--muted); font: 12px/1.7 "Consolas", monospace; text-align: right; word-break: break-all; }
+    .source-grid, .context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-top: 15px; }
+    .card { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--panel); }
+    .card-title { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; background: var(--panel-soft); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 700; }
+    .card-title small { color: var(--muted); font-weight: 400; }
+    .source-text { min-height: 122px; padding: 16px; white-space: pre-wrap; word-break: break-word; font-size: 17px; line-height: 1.85; }
+    .source-text.zh { font-size: 15px; }
+    .context-text { min-height: 67px; padding: 11px 13px; white-space: pre-wrap; word-break: break-word; color: #445267; font-size: 12px; line-height: 1.7; }
+    .section { margin-top: 20px; }
+    .section-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px; }
+    .section-head h3 { margin: 0; font-size: 15px; }
+    .section-head span { color: var(--muted); font-size: 12px; }
+    .analysis-state { margin-left: auto; color: var(--blue); font-size: 12px; }
+    .issue { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--gold-line); border-radius: 8px; background: var(--gold-soft); color: #7a5315; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; line-height: 1.55; word-break: break-word; }
+    th { background: var(--panel-soft); color: #445267; font-weight: 700; font-size: 12px; }
+    tr:last-child td { border-bottom: 0; }
+    .words th:nth-child(1) { width: 17%; } .words th:nth-child(2) { width: 15%; } .words th:nth-child(3) { width: 21%; } .words th:nth-child(4) { width: 47%; }
+    .grammar th:nth-child(1) { width: 29%; } .grammar th:nth-child(2) { width: 71%; }
+    .empty-row { color: var(--muted); }
+    .note { min-height: 58px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.7; }
+    .footer-hint { margin-top: 17px; color: var(--muted); font-size: 11px; }
+    .error { padding: 40px 20px; color: var(--danger); }
+    @media (max-width: 950px) {
+      body { overflow: auto; }
+      .main { grid-template-columns: 1fr; min-height: 0; }
+      .sidebar { max-height: 290px; }
+      .status { width: 100%; margin-left: 0; }
+      .detail-wrap { min-height: 640px; }
+    }
+    @media (max-width: 650px) {
+      .topbar { padding: 13px 14px; }
+      .main { padding: 10px; }
+      .source-grid, .context-grid { grid-template-columns: 1fr; }
+      .detail { padding: 16px; }
+      input[type="search"] { width: 100%; }
+      .meta { display: block; } .meta-code { margin-top: 8px; text-align: left; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><h1>台词解析查看器</h1><p>原文、官方中文与结构化学习笔记</p></div>
+    <label class="control">批次 <select id="batchSelect" aria-label="选择批次"></select></label>
+    <label class="control search-control">搜索 <input id="searchInput" type="search" placeholder="ID、原文、词汇或语法" aria-label="搜索"></label>
+    <button id="refreshButton" type="button">刷新</button>
+    <button id="clearButton" type="button">清除</button>
+    <div id="status" class="status">正在读取批次……</div>
+  </header>
+  <main class="main">
+    <aside class="sidebar">
+      <div class="sidebar-head"><strong>记录列表</strong><span id="listCount"></span></div>
+      <div id="recordList" class="record-list"></div>
+    </aside>
+    <section class="detail-wrap">
+      <div id="detail" class="detail"></div>
+    </section>
+  </main>
+</div>
+<script>
+(() => {
+  const state = { batch: "", records: [], filtered: [], selected: -1, loading: false };
+  const $ = (id) => document.getElementById(id);
+  const batchSelect = $("batchSelect");
+  const searchInput = $("searchInput");
+  const recordList = $("recordList");
+  const detail = $("detail");
+  const status = $("status");
+  const listCount = $("listCount");
+
+  function escapeText(value) { return value == null ? "" : String(value); }
+  function formatText(value) { return escapeText(value); }
+  function emptyText(value, fallback = "（无）") { return value ? value : fallback; }
+  function make(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function appendCell(row, text, className = "") {
+    const cell = make("td", className, text);
+    row.appendChild(cell);
+    return cell;
+  }
+  function makeTable(className, headers, rows) {
+    const table = make("table", className);
+    const thead = make("thead");
+    const headerRow = make("tr");
+    headers.forEach((header) => headerRow.appendChild(make("th", "", header)));
+    thead.appendChild(headerRow); table.appendChild(thead);
+    const tbody = make("tbody");
+    if (!rows.length) {
+      const row = make("tr"); const cell = make("td", "empty-row", "本条没有可显示的项目");
+      cell.colSpan = headers.length; row.appendChild(cell); tbody.appendChild(row);
+    } else {
+      rows.forEach((values) => { const row = make("tr"); values.forEach((value) => appendCell(row, value)); tbody.appendChild(row); });
+    }
+    table.appendChild(tbody); return table;
+  }
+  function makeCard(title, content, className = "") {
+    const card = make("section", `card ${className}`.trim());
+    const head = make("div", "card-title", title); card.appendChild(head); card.appendChild(content); return card;
+  }
+  function setStatus(text) { status.textContent = text; }
+  function recordSearchText(record) { return JSON.stringify(record).toLocaleLowerCase(); }
+
+  async function getJson(url) {
+    const response = await fetch(url, { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  }
+  async function loadBatches() {
+    const data = await getJson("/api/batches");
+    const batches = data.batches || [];
+    batchSelect.replaceChildren();
+    batches.forEach((item) => {
+      const option = make("option", "", `${item.name}${item.result_exists ? " · 已有解析" : " · 待解析"}`);
+      option.value = item.name; batchSelect.appendChild(option);
+    });
+    if (!batches.length) throw new Error("analysis/input 中没有 JSONL 批次");
+    const queryBatch = new URLSearchParams(location.search).get("batch");
+    const preferred = queryBatch && batches.some((item) => item.name === queryBatch) ? queryBatch : (batches.some((item) => item.name === "0001") ? "0001" : batches[0].name);
+    batchSelect.value = preferred;
+    await loadBatch(preferred);
+  }
+  async function loadBatch(batch) {
+    if (!batch || state.loading) return;
+    state.loading = true; state.batch = batch; setStatus("正在读取……");
+    try {
+      const data = await getJson(`/api/batch/${encodeURIComponent(batch)}`);
+      state.records = data.records || []; state.selected = -1;
+      applyFilter();
+      const parsed = data.parsed_count || 0;
+      let label = `${data.record_count || 0} 条记录 · 已解析 ${parsed} 条`;
+      if (data.stale_result_count) label += ` · 未匹配结果 ${data.stale_result_count} 条`;
+      setStatus(label);
+    } catch (error) {
+      state.records = []; state.selected = -1; renderList();
+      detail.replaceChildren(make("div", "error", error.message)); setStatus("读取失败");
+    } finally { state.loading = false; }
+  }
+  function applyFilter() {
+    const query = searchInput.value.trim().toLocaleLowerCase();
+    state.filtered = state.records.map((_, index) => index).filter((index) => !query || recordSearchText(state.records[index]).includes(query));
+    if (!state.filtered.length) { state.selected = -1; renderList(); detail.replaceChildren(make("div", "empty", "没有匹配记录")); return; }
+    if (!state.filtered.includes(state.selected)) state.selected = state.filtered[0];
+    renderList(); renderDetail(state.selected);
+  }
+  function renderList() {
+    const query = searchInput.value.trim().toLocaleLowerCase();
+    state.filtered = state.records.map((_, index) => index).filter((index) => !query || recordSearchText(state.records[index]).includes(query));
+    listCount.textContent = `${state.filtered.length}/${state.records.length}`;
+    recordList.replaceChildren();
+    if (!state.filtered.length) { recordList.appendChild(make("div", "empty", "没有匹配记录")); detail.replaceChildren(make("div", "empty", "没有匹配记录")); return; }
+    state.filtered.forEach((index) => {
+      const record = state.records[index];
+      const button = make("button", `record${index === state.selected ? " active" : ""}`);
+      button.type = "button"; button.dataset.index = index;
+      const line = make("div", "record-line");
+      line.appendChild(make("span", `dot${record.issue || !record.analysis ? " missing" : ""}`));
+      line.appendChild(make("span", "record-index", String(index + 1).padStart(4, "0")));
+      line.appendChild(make("span", "record-id", emptyText(record.id, "无 ID")));
+      button.appendChild(line);
+      button.appendChild(make("div", "record-preview", emptyText(record.ja.replace(/\n/g, " "), "无原文")));
+      button.addEventListener("click", () => { state.selected = index; renderList(); renderDetail(index); });
+      recordList.appendChild(button);
+    });
+    if (state.selected >= 0) renderDetail(state.selected);
+  }
+  function renderDetail(index) {
+    const record = state.records[index]; if (!record) return;
+    detail.replaceChildren();
+    const meta = make("div", "meta");
+    meta.appendChild(make("h2", "", `第 ${index + 1}/${state.records.length} 条`));
+    meta.appendChild(make("div", "meta-code", `${record.id}\nrow=${record.row_name}  text_index=${record.text_index}\nhash=${record.source_hash}`));
+    detail.appendChild(meta);
+
+    const sourceGrid = make("div", "source-grid");
+    sourceGrid.appendChild(makeCard("日文原文", make("div", "source-text", formatText(record.ja))));
+    sourceGrid.appendChild(makeCard("官方简体中文", make("div", "source-text zh", formatText(record.official_zh_cn))));
+    detail.appendChild(sourceGrid);
+
+    const contextGrid = make("div", "context-grid");
+    const before = record.context_before ? `${record.context_before.ja || ""}\n${record.context_before.official_zh_cn || ""}`.trim() : "（无相邻台词）";
+    const after = record.context_after ? `${record.context_after.ja || ""}\n${record.context_after.official_zh_cn || ""}`.trim() : "（无相邻台词）";
+    contextGrid.appendChild(makeCard("上一条上下文", make("div", "context-text", before)));
+    contextGrid.appendChild(makeCard("下一条上下文", make("div", "context-text", after)));
+    detail.appendChild(contextGrid);
+
+    const analysis = record.analysis;
+    const analysisSection = make("section", "section");
+    const head = make("div", "section-head"); head.appendChild(make("h3", "", "解析"));
+    head.appendChild(make("span", "", analysis ? "结构化结果" : "暂无结果"));
+    if (record.issue) head.appendChild(make("span", "analysis-state", record.issue));
+    analysisSection.appendChild(head);
+    if (record.issue) analysisSection.appendChild(make("div", "issue", record.issue));
+    const words = Array.isArray(analysis?.words) ? analysis.words : [];
+    const grammar = Array.isArray(analysis?.grammar) ? analysis.grammar : [];
+    analysisSection.appendChild(makeTable("words", ["词面", "读音", "词性", "释义"], words.map((word) => [emptyText(word.surface), word.reading || "", emptyText(word.pos), emptyText(word.meaning)])));
+    analysisSection.appendChild(makeTable("grammar", ["句型", "说明"], grammar.map((item) => [item.pattern, item.explanation].map((value) => emptyText(value)))));
+    const note = make("div", "note", analysis ? emptyText(analysis.note) : "（暂无补充说明）");
+    analysisSection.appendChild(makeCard("补充说明", note));
+    detail.appendChild(analysisSection);
+    detail.appendChild(make("div", "footer-hint", "快捷键：↑ / ↓ 切换记录；Ctrl+F 聚焦搜索；Esc 清除搜索。数据来自本机 JSONL，只读展示。"));
+  }
+  batchSelect.addEventListener("change", () => { history.replaceState(null, "", `?batch=${encodeURIComponent(batchSelect.value)}`); loadBatch(batchSelect.value); });
+  searchInput.addEventListener("input", applyFilter);
+  $("refreshButton").addEventListener("click", () => loadBatch(batchSelect.value));
+  $("clearButton").addEventListener("click", () => { searchInput.value = ""; applyFilter(); searchInput.focus(); });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { searchInput.value = ""; applyFilter(); }
+    if (event.ctrlKey && event.key.toLowerCase() === "f") { event.preventDefault(); searchInput.focus(); searchInput.select(); }
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && document.activeElement !== searchInput) {
+      if (!state.filtered.length) return;
+      const current = Math.max(0, state.filtered.indexOf(state.selected));
+      const next = Math.max(0, Math.min(state.filtered.length - 1, current + (event.key === "ArrowUp" ? -1 : 1)));
+      state.selected = state.filtered[next]; renderList(); renderDetail(state.selected); event.preventDefault();
+    }
+  });
+  loadBatches().catch((error) => { setStatus("读取失败"); detail.replaceChildren(make("div", "error", error.message)); });
+})();
+</script>
+</body>
+</html>

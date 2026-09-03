@@ -1,0 +1,16 @@
+.idea/
+.vscode/
+dist/
+__pycache__/
+*.pyc
+*.log
+temp/
+scripts/analysis/input
+scripts/analysis/results
+scripts/analysis/manifest.json
+
+# Generated release inputs
+/OctopathDialogueAssistantInstaller.exe
+/mod/Scripts/*.tsv
+/mod/pak/*.pak
+/mod/runtime/UE4SS/
