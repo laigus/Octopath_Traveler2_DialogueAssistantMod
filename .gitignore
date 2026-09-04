@@ -5,9 +5,9 @@ __pycache__/
 *.pyc
 *.log
 temp/
-scripts/analysis/input
-scripts/analysis/results
-scripts/analysis/manifest.json
+/scripts/analysis/*/input/
+/scripts/analysis/*/results/
+/scripts/analysis/*/manifest.json
 
 # Generated release inputs
 /OctopathDialogueAssistantInstaller.exe

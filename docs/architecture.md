@@ -32,6 +32,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 | `mod/Scripts/main.lua`、`config.lua` | 手工维护 | 纳入 | 包含 |
 | `scripts/build_pak/source/` | 经 UAssetGUI 编辑的四个 PAK 源资产 | 纳入 | 不直接包含 |
 | `mod/Scripts/official_*.tsv` | 从受支持游戏 build 生成 | 忽略 | 包含 |
+| `scripts/analysis/{ja,en}/` 的 input、results、manifest | 从官方文本与 Agent 结果生成 | 忽略 | 不包含 |
 | `mod/Scripts/analysis_ja.tsv` | 从完整 Agent 结果生成 | 忽略 | 包含 |
 | `mod/pak/OctopathDialogueAssistant_P.pak` | 从 `scripts/build_pak/source/` 生成 | 忽略 | 包含 |
 | `mod/runtime/UE4SS/` | 从固定上游版本下载并校验 | 忽略 | 包含 |
@@ -63,7 +64,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 - 默认开关、按键和语言修改 `mod/Scripts/config.lua`；安装更新会保留游戏目录中已有的用户配置。
 - 只有设置页分类注册或复合字体映射变化时才更新 `scripts/build_pak/source/` 中的源资产并重新生成 PAK。
 - 游戏官方文本表或受支持 build 变化时才重新生成九种 `official_*.tsv`。
-- Agent 解析结果变化时重新生成 `analysis_ja.tsv`。
+- Agent 解析结果变化时，从对应语言的独立数据集重新生成解析查询表；当前发布运行时使用 `analysis_ja.tsv`。
 
 运行时代码不访问 `SaveGames`，也不写剧情旗标、任务、物品、金钱或全局剧情执行索引。
 
@@ -80,35 +81,50 @@ powershell -ExecutionPolicy Bypass -File scripts\build_official_texts\build.ps1 
 
 脚本从目标 build 的 `TalkData_JA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 与 `KR` 生成对应的 `official_*.tsv`，临时解包内容只进入 `temp/official-texts/`，成功后直接更新 `mod/Scripts/`。这九个生成文件被 Git 忽略，只进入最终发布包，不在用户安装时生成。
 
-### 4. 生成日语解析数据
+### 4. 生成日语与英语解析数据
 
-先从已生成的日文和简体中文官方文本建立 Agent 输入：
+日语和英语分别使用 `scripts/analysis/ja/` 与 `scripts/analysis/en/`，每套数据集都有自己的 `input/`、`results/` 和 `manifest.json`。输入由对应官方文本与简体中文官方文本生成：
 
 ```powershell
 python scripts\analysis\tools\dataset.py export `
-  --ja mod\Scripts\official_ja.tsv `
+  --language ja `
+  --source mod\Scripts\official_ja.tsv `
   --zh-cn mod\Scripts\official_zh_cn.tsv `
-  --output-dir scripts\analysis
+  --output-dir scripts\analysis\ja
+
+python scripts\analysis\tools\dataset.py export `
+  --language en `
+  --source mod\Scripts\official_en.tsv `
+  --zh-cn mod\Scripts\official_zh_cn.tsv `
+  --output-dir scripts\analysis\en
 ```
 
-Agent 按 `scripts/analysis/tools/README.md` 的固定 JSONL 格式写入 `scripts/analysis/results/`。输入、结果和 manifest 都是 Git 忽略的线下工作数据。需要人工查看时运行：
+日语结果使用 `reading`，英语结果使用 IPA 字段 `pronunciation`；完整 JSONL 约束和 Agent 指令只维护在 `scripts/analysis/tools/README.md`。Agent 把结果写入对应语言的 `results/`，工具根据 manifest 中的语言选择结果结构。输入、结果和 manifest 都保持 Git 忽略。
+
+解析过程中可以分别查看和校验两套数据：
 
 ```powershell
-python scripts\analysis\tools\analysis_viewer.py --batch 0001
+python scripts\analysis\tools\analysis_viewer.py --language ja --batch 0001
+python scripts\analysis\tools\analysis_viewer.py --language en --batch 0001
+
+python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis\ja
+python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis\en
 ```
 
-所有批次完成后校验并合并：
+所有日语批次完成后生成当前发布运行时使用的查询表：
 
 ```powershell
-python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis --require-complete
+python scripts\analysis\tools\dataset.py validate `
+  --dataset-dir scripts\analysis\ja `
+  --require-complete
 
 python scripts\analysis\tools\dataset.py build-runtime `
-  --dataset-dir scripts\analysis `
+  --dataset-dir scripts\analysis\ja `
   --output mod\Scripts\analysis_ja.tsv `
   --require-complete
 ```
 
-最终的 `mod/Scripts/analysis_ja.tsv` 同样被 Git 忽略，只进入 Mod 运行时和发布包。要在新开发机重建它，需要先恢复该开发者自己的 `scripts/analysis/input/`、`results/` 和 `manifest.json`，再执行上述校验与合并命令。
+`build-runtime` 同样能把英语数据集合并为带 `EN` 标识的 `analysis_en.tsv`，但当前游戏运行时和发布包仍只消费日语查询表。要在新开发机重建任一数据集，需要先恢复该开发者自己的对应语言工作区。
 
 ### 5. 更新覆盖 PAK
 
@@ -204,7 +220,7 @@ mod/runtime/UE4SS/3.0.1/UE4SS_v3.0.1.zip
 
 - `scripts/build_pak/source/`、`mod/Scripts/main.lua`、`mod/Scripts/config.lua`、构建脚本和文档进入版本控制；
 - `official_*.tsv`、`analysis_ja.tsv`、生成 PAK、UE4SS 下载包、安装器 EXE、`dist/` 与 `temp/` 未进入版本控制；
-- `scripts/analysis/input/`、`scripts/analysis/results/`、`scripts/analysis/manifest.json`、日志和查看器缓存未进入版本控制；
+- `scripts/analysis/ja/`、`scripts/analysis/en/` 中的输入、结果与 manifest、日志和查看器缓存未进入版本控制；
 - `README.md` 与 `README.en.md` 只反映使用者可见的当前行为，本文与 `docs/research.md` 反映对应实现和已确认对象。
 
 ## RichEvent 重放

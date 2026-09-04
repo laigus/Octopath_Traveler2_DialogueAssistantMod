@@ -7,9 +7,19 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 RESULT_KEYS = {"id", "source_hash", "words", "grammar", "note"}
-WORD_KEYS = {"surface", "reading", "pos", "meaning"}
 GRAMMAR_KEYS = {"pattern", "explanation"}
-RUNTIME_ANALYSIS_HEADER = "# OctopathDialogueAssistant analysis JA dialogue v1"
+LANGUAGE_SPECS = {
+    "JA": {
+        "input_field": "ja",
+        "pronunciation_field": "reading",
+        "runtime_header": "# OctopathDialogueAssistant analysis JA dialogue v1",
+    },
+    "EN": {
+        "input_field": "en",
+        "pronunciation_field": "pronunciation",
+        "runtime_header": "# OctopathDialogueAssistant analysis EN dialogue v1",
+    },
+}
 
 
 def sha256(path: Path) -> str:
@@ -72,15 +82,16 @@ def context_value(
     translations: dict[tuple[str, int], str],
     source_index: int,
     candidate_index: int,
+    input_field: str,
 ) -> dict[str, str] | None:
     if candidate_index < 0 or candidate_index >= len(ordered):
         return None
     source_row = ordered[source_index][0]
-    row_name, text_index, ja_text = ordered[candidate_index]
+    row_name, text_index, source_text = ordered[candidate_index]
     if context_group(source_row) != context_group(row_name):
         return None
     return {
-        "ja": ja_text,
+        input_field: source_text,
         "official_zh_cn": translations.get((row_name, text_index), ""),
     }
 
@@ -117,7 +128,10 @@ def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def export_dataset(args: argparse.Namespace) -> None:
-    ja_path = args.ja.resolve()
+    language = args.language.upper()
+    spec = LANGUAGE_SPECS[language]
+    input_field = str(spec["input_field"])
+    source_path = args.source.resolve()
     zh_path = args.zh_cn.resolve()
     output_dir = args.output_dir.resolve()
     input_dir = output_dir / "input"
@@ -127,21 +141,25 @@ def export_dataset(args: argparse.Namespace) -> None:
     for previous in input_dir.glob("*.jsonl"):
         previous.unlink()
 
-    ordered, _ = load_dialogue_table(ja_path)
+    ordered, _ = load_dialogue_table(source_path)
     _, translations = load_dialogue_table(zh_path)
     rows: list[dict[str, object]] = []
-    for source_index, (row_name, text_index, ja_text) in enumerate(ordered):
-        if not ja_text.strip():
+    for source_index, (row_name, text_index, source_text) in enumerate(ordered):
+        if not source_text.strip():
             continue
         key = (row_name, text_index)
         item: dict[str, object] = {
             "id": f"{row_name}:{text_index}",
             "row_name": row_name,
             "text_index": text_index,
-            "ja": ja_text,
+            input_field: source_text,
             "official_zh_cn": translations.get(key, ""),
-            "context_before": context_value(ordered, translations, source_index, source_index - 1),
-            "context_after": context_value(ordered, translations, source_index, source_index + 1),
+            "context_before": context_value(
+                ordered, translations, source_index, source_index - 1, input_field
+            ),
+            "context_after": context_value(
+                ordered, translations, source_index, source_index + 1, input_field
+            ),
         }
         item["source_hash"] = source_hash(item)
         rows.append(item)
@@ -164,11 +182,12 @@ def export_dataset(args: argparse.Namespace) -> None:
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
+        "language": language,
         "entry_count": len(rows),
         "batch_size": args.batch_size,
         "batch_count": len(batches),
         "source": {
-            "ja_sha256": sha256(ja_path),
+            f"{input_field}_sha256": sha256(source_path),
             "zh_cn_sha256": sha256(zh_path),
         },
         "batches": batches,
@@ -186,7 +205,9 @@ def require_single_line_string(value: object, field: str, source: Path, line_num
         raise RuntimeError(f"{source}:{line_number} field {field} must be a single line")
 
 
-def validate_result_item(item: object, source: Path, line_number: int) -> tuple[str, str]:
+def validate_result_item(
+    item: object, source: Path, line_number: int, language: str
+) -> tuple[str, str]:
     if not isinstance(item, dict) or set(item) != RESULT_KEYS:
         raise RuntimeError(f"{source}:{line_number} result keys must be {sorted(RESULT_KEYS)}")
     require_single_line_string(item["id"], "id", source, line_number)
@@ -196,10 +217,14 @@ def validate_result_item(item: object, source: Path, line_number: int) -> tuple[
         raise RuntimeError(f"{source}:{line_number} words must be an array")
     if not isinstance(item["grammar"], list):
         raise RuntimeError(f"{source}:{line_number} grammar must be an array")
+    pronunciation_field = str(LANGUAGE_SPECS[language]["pronunciation_field"])
+    word_keys = {"surface", pronunciation_field, "pos", "meaning"}
     for word in item["words"]:
-        if not isinstance(word, dict) or set(word) != WORD_KEYS:
-            raise RuntimeError(f"{source}:{line_number} invalid word object")
-        for key in WORD_KEYS:
+        if not isinstance(word, dict) or set(word) != word_keys:
+            raise RuntimeError(
+                f"{source}:{line_number} word keys must be {sorted(word_keys)}"
+            )
+        for key in word_keys:
             require_single_line_string(word[key], f"words.{key}", source, line_number)
     for grammar in item["grammar"]:
         if not isinstance(grammar, dict) or set(grammar) != GRAMMAR_KEYS:
@@ -209,7 +234,7 @@ def validate_result_item(item: object, source: Path, line_number: int) -> tuple[
     return item["id"], item["source_hash"]
 
 
-def read_identities(path: Path, result: bool) -> list[tuple[str, str]]:
+def read_identities(path: Path, result: bool, language: str) -> list[tuple[str, str]]:
     identities: list[tuple[str, str]] = []
     with path.open("r", encoding="utf-8") as source:
         for line_number, line in enumerate(source, start=1):
@@ -217,7 +242,7 @@ def read_identities(path: Path, result: bool) -> list[tuple[str, str]]:
                 continue
             item = json.loads(line)
             if result:
-                identities.append(validate_result_item(item, path, line_number))
+                identities.append(validate_result_item(item, path, line_number, language))
             else:
                 item_id = item.get("id") if isinstance(item, dict) else None
                 item_hash = item.get("source_hash") if isinstance(item, dict) else None
@@ -227,9 +252,19 @@ def read_identities(path: Path, result: bool) -> list[tuple[str, str]]:
     return identities
 
 
+def read_manifest(dataset_dir: Path) -> tuple[dict[str, object], str]:
+    manifest = json.loads((dataset_dir / "manifest.json").read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise RuntimeError("Dataset manifest must be a JSON object")
+    language = manifest.get("language")
+    if language not in LANGUAGE_SPECS:
+        raise RuntimeError(f"Unsupported or missing dataset language: {language}")
+    return manifest, str(language)
+
+
 def validate_results(args: argparse.Namespace) -> None:
     dataset_dir = args.dataset_dir.resolve()
-    manifest = json.loads((dataset_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest, language = read_manifest(dataset_dir)
     validated = 0
     missing = 0
     for batch in manifest["batches"]:
@@ -238,8 +273,8 @@ def validate_results(args: argparse.Namespace) -> None:
         if not result_path.exists():
             missing += 1
             continue
-        input_identities = read_identities(input_path, result=False)
-        result_identities = read_identities(result_path, result=True)
+        input_identities = read_identities(input_path, result=False, language=language)
+        result_identities = read_identities(result_path, result=True, language=language)
         if input_identities != result_identities:
             raise RuntimeError(f"Result ids, source hashes, or order do not match: {result_path}")
         validated += 1
@@ -258,7 +293,7 @@ def read_jsonl(path: Path) -> list[object]:
     return rows
 
 
-def format_analysis(item: dict[str, object]) -> str:
+def format_analysis(item: dict[str, object], language: str) -> str:
     lines: list[str] = []
     words = item["words"]
     if isinstance(words, list) and words:
@@ -266,12 +301,16 @@ def format_analysis(item: dict[str, object]) -> str:
         for raw_word in words:
             word = raw_word if isinstance(raw_word, dict) else {}
             surface = str(word.get("surface", ""))
-            reading = str(word.get("reading", ""))
+            pronunciation_field = str(LANGUAGE_SPECS[language]["pronunciation_field"])
+            pronunciation = str(word.get(pronunciation_field, ""))
             part_of_speech = str(word.get("pos", ""))
             meaning = str(word.get("meaning", ""))
             label = surface
-            if reading:
-                label += f"（{reading}）"
+            if pronunciation:
+                if language == "EN":
+                    label += f" /{pronunciation.strip().strip('/')}/"
+                else:
+                    label += f"（{pronunciation}）"
             if part_of_speech:
                 label += f"〔{part_of_speech}〕"
             lines.append(f"{label}：{meaning}" if meaning else label)
@@ -298,7 +337,7 @@ def escape_runtime_field(value: str) -> str:
 def build_runtime_analysis(args: argparse.Namespace) -> None:
     dataset_dir = args.dataset_dir.resolve()
     output = args.output.resolve()
-    manifest = json.loads((dataset_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest, language = read_manifest(dataset_dir)
     runtime_rows: list[tuple[str, int, str]] = []
     seen: set[tuple[str, int]] = set()
     used_batches = 0
@@ -314,8 +353,8 @@ def build_runtime_analysis(args: argparse.Namespace) -> None:
         try:
             inputs = read_jsonl(input_path)
             results = read_jsonl(result_path)
-            input_identities = read_identities(input_path, result=False)
-            result_identities = read_identities(result_path, result=True)
+            input_identities = read_identities(input_path, result=False, language=language)
+            result_identities = read_identities(result_path, result=True, language=language)
             if input_identities != result_identities or len(inputs) != len(results):
                 raise RuntimeError("result identities do not match input")
             batch_rows: list[tuple[str, int, str]] = []
@@ -329,7 +368,7 @@ def build_runtime_analysis(args: argparse.Namespace) -> None:
                 key = (row_name, text_index)
                 if key in seen:
                     raise RuntimeError(f"duplicate dialogue identity: {row_name}:{text_index}")
-                batch_rows.append((row_name, text_index, format_analysis(result)))
+                batch_rows.append((row_name, text_index, format_analysis(result, language)))
             for row_name, text_index, text in batch_rows:
                 seen.add((row_name, text_index))
                 runtime_rows.append((row_name, text_index, text))
@@ -348,7 +387,7 @@ def build_runtime_analysis(args: argparse.Namespace) -> None:
     temporary = output.with_name(output.name + ".tmp")
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as target:
-            target.write(RUNTIME_ANALYSIS_HEADER + "\n")
+            target.write(str(LANGUAGE_SPECS[language]["runtime_header"]) + "\n")
             for row_name, text_index, text in runtime_rows:
                 target.write(f"{row_name}\t{text_index}\t{escape_runtime_field(text)}\n")
         temporary.replace(output)
@@ -368,7 +407,8 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     export_parser = subparsers.add_parser("export")
-    export_parser.add_argument("--ja", required=True, type=Path)
+    export_parser.add_argument("--language", required=True, choices=("ja", "en"))
+    export_parser.add_argument("--source", required=True, type=Path)
     export_parser.add_argument("--zh-cn", required=True, type=Path)
     export_parser.add_argument("--output-dir", required=True, type=Path)
     export_parser.add_argument("--batch-size", type=int, default=50)

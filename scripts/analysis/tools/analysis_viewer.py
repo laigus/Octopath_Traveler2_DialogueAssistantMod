@@ -1,10 +1,10 @@
 """本地台词解析查看器。
 
-启动后提供一个只读的本地网页界面，按批次读取 analysis/input 与 analysis/results，
+启动后提供一个只读的本地网页界面，按批次读取对应语言的 input 与 results，
 避免直接打开 JSONL 时难以对照原文和解析。
 
 启动示例：
-    python scripts\\analysis\\tools\\analysis_viewer.py --batch 0001
+    python scripts\\analysis\\tools\\analysis_viewer.py --language ja --batch 0001
 """
 
 from __future__ import annotations
@@ -54,13 +54,22 @@ def record_key(record: dict[str, Any]) -> tuple[str, str]:
     return text_value(record.get("id")), text_value(record.get("source_hash"))
 
 
-def context_payload(context: Any) -> Optional[dict[str, str]]:
+def context_payload(context: Any, source_field: str) -> Optional[dict[str, str]]:
     if not isinstance(context, dict):
         return None
     return {
-        "ja": text_value(context.get("ja")),
+        "source_text": text_value(context.get(source_field)),
         "official_zh_cn": text_value(context.get("official_zh_cn")),
     }
+
+
+def dataset_language(dataset_dir: Path) -> str:
+    manifest_path = dataset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    language = manifest.get("language") if isinstance(manifest, dict) else None
+    if language not in {"JA", "EN"}:
+        raise ValueError(f"{manifest_path} 缺少受支持的 language")
+    return language
 
 
 def build_batch_payload(dataset_dir: Path, batch: str) -> dict[str, Any]:
@@ -68,6 +77,9 @@ def build_batch_payload(dataset_dir: Path, batch: str) -> dict[str, Any]:
 
     if not BATCH_NAME_RE.fullmatch(batch):
         raise ValueError("批次名称包含不允许的字符")
+
+    language = dataset_language(dataset_dir)
+    source_field = language.lower()
 
     input_path = dataset_dir / "input" / f"{batch}.jsonl"
     result_path = dataset_dir / "results" / f"{batch}.jsonl"
@@ -112,10 +124,10 @@ def build_batch_payload(dataset_dir: Path, batch: str) -> dict[str, Any]:
                 "source_hash": text_value(input_record.get("source_hash")),
                 "row_name": text_value(input_record.get("row_name")),
                 "text_index": input_record.get("text_index"),
-                "ja": text_value(input_record.get("ja")),
+                "source_text": text_value(input_record.get(source_field)),
                 "official_zh_cn": text_value(input_record.get("official_zh_cn")),
-                "context_before": context_payload(input_record.get("context_before")),
-                "context_after": context_payload(input_record.get("context_after")),
+                "context_before": context_payload(input_record.get("context_before"), source_field),
+                "context_after": context_payload(input_record.get("context_after"), source_field),
                 "analysis": analysis,
                 "issue": issue,
             }
@@ -123,6 +135,7 @@ def build_batch_payload(dataset_dir: Path, batch: str) -> dict[str, Any]:
 
     return {
         "batch": batch,
+        "language": language,
         "record_count": len(payload_records),
         "parsed_count": sum(1 for item in payload_records if item["analysis"] is not None and not item["issue"]),
         "stale_result_count": sum(1 for key in result_map if key not in input_keys),
@@ -160,6 +173,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         input_dir = self.dataset_dir / "input"
         names = sorted(path.stem for path in input_dir.glob("*.jsonl")) if input_dir.is_dir() else []
         return {
+            "language": dataset_language(self.dataset_dir),
             "batches": [
                 {
                     "name": name,
@@ -209,17 +223,26 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=0, help="监听端口，0 表示自动选择空闲端口")
     parser.add_argument("--no-browser", action="store_true", help="只启动服务，不自动打开浏览器")
     parser.add_argument(
+        "--language",
+        choices=("ja", "en"),
+        default="ja",
+        help="查看的数据语言，默认 ja",
+    )
+    parser.add_argument(
         "--dataset-dir",
         type=Path,
-        default=Path(__file__).resolve().parents[1],
-        help="解析数据目录，默认根据脚本位置使用 scripts/analysis",
+        help="解析数据目录；不指定时使用 scripts/analysis/<language>",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    dataset_dir = args.dataset_dir.resolve()
+    dataset_dir = (
+        args.dataset_dir.resolve()
+        if args.dataset_dir is not None
+        else (Path(__file__).resolve().parents[1] / args.language).resolve()
+    )
     html_path = Path(__file__).resolve().with_name("analysis_viewer.html")
     if not html_path.is_file():
         print(f"找不到界面文件：{html_path}", file=sys.stderr)

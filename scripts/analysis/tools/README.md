@@ -1,82 +1,138 @@
 # 台词离线解析工具
 
-本目录只负责在游戏外导出台词、约束 Agent 输出、校验结果和浏览数据，不参与 Mod 运行时。
+本目录负责在游戏外导出日语或英语台词、约束 Agent 输出、校验结果、浏览数据并合并查询表，不参与游戏运行时。
 
-`dataset.py export` 从日文和简体中文官方文本表生成 Git 忽略的 `scripts\analysis/input/*.jsonl`：
+每种语言使用独立工作区，避免重新导出一种语言时覆盖另一种语言的数据：
+
+```text
+scripts/analysis/
+├─ ja/
+│  ├─ input/
+│  ├─ results/
+│  └─ manifest.json
+├─ en/
+│  ├─ input/
+│  ├─ results/
+│  └─ manifest.json
+└─ tools/
+```
+
+`ja/` 与 `en/` 下的输入、结果和 manifest 都是 Git 忽略的线下工作数据。
+
+## 生成输入
+
+日语：
 
 ```powershell
-python scripts\analysis\tools\dataset.py export --ja "<official_ja.tsv>" --zh-cn "<official_zh_cn.tsv>" --output-dir scripts\analysis
+python scripts\analysis\tools\dataset.py export `
+  --language ja `
+  --source mod\Scripts\official_ja.tsv `
+  --zh-cn mod\Scripts\official_zh_cn.tsv `
+  --output-dir scripts\analysis\ja
 ```
 
-输出清单位于 `scripts\analysis/manifest.json`，Agent 结果写入对应的 `scripts\analysis/results/NNNN.jsonl`。
+英语：
 
-## 输入
+```powershell
+python scripts\analysis\tools\dataset.py export `
+  --language en `
+  --source mod\Scripts\official_en.tsv `
+  --zh-cn mod\Scripts\official_zh_cn.tsv `
+  --output-dir scripts\analysis\en
+```
 
-每个输入文件由 JSONL 记录组成，每行是一条独立台词：
+默认每个批次包含 50 条台词。需要调整时增加 `--batch-size <数量>`。重新导出只重建目标语言的 `input/*.jsonl` 与 `manifest.json`，不会删除 `results/`；源文本变化后，新的 `source_hash` 会让旧结果在校验时失效。
+
+## 输入格式
+
+每个输入文件是 JSONL，每行是一条独立台词。日语记录使用 `ja`：
 
 ```json
-{"id":"TX_MS_SHO_EX3_0600_0010:0","row_name":"TX_MS_SHO_EX3_0600_0010","text_index":0,"ja":"わしを“雇う”……だと？","official_zh_cn":"你要“雇用”老夫……？","context_before":null,"context_after":{"ja":"何のつもりだ","official_zh_cn":"你有什么企图"},"source_hash":"0123456789ABCDEF"}
+{"id":"ROW_NAME:0","row_name":"ROW_NAME","text_index":0,"ja":"対象の日本語台詞","official_zh_cn":"官方简体中文台词","context_before":null,"context_after":{"ja":"下一条日语台词","official_zh_cn":"下一条官方简体中文台词"},"source_hash":"0123456789ABCDEF"}
 ```
 
-- `id` 和 `source_hash` 是结果必须原样返回的稳定键；源文本变化后哈希也会变化，旧结果不会被误用。
-- `ja` 是唯一需要解析的目标文本。
-- `official_zh_cn` 只用于消歧，不要重新翻译或改写。
-- `context_before`、`context_after` 只帮助判断省略、指代和语气，不属于目标结果。
+英语记录使用 `en`：
 
-## Agent 指令
+```json
+{"id":"ROW_NAME:0","row_name":"ROW_NAME","text_index":0,"en":"The target English line.","official_zh_cn":"官方简体中文台词","context_before":null,"context_after":{"en":"The next English line.","official_zh_cn":"下一条官方简体中文台词"},"source_hash":"0123456789ABCDEF"}
+```
+
+- `id` 和 `source_hash` 是结果必须原样返回的稳定键。
+- `ja` 或 `en` 是唯一需要解析的目标文本。
+- `official_zh_cn` 只用于消歧，不需要重新翻译或改写。
+- `context_before`、`context_after` 只用于判断省略、指代和语气，不属于目标结果。
+
+## Agent 通用指令
 
 处理一个输入文件时使用以下约束：
 
 1. 按输入顺序为每一行输出一行 JSON，数量、顺序、`id` 和 `source_hash` 完全一致。
 2. 不输出 Markdown、代码围栏、开场白、总结或进度说明。
-3. 不重复日文原句和官方翻译。
-4. `words` 解释句子中的单词、固定表达和缩约形；常见助词放入 `grammar`，不要机械拆成词表。
-5. `reading` 只写平假名；原词已经全是假名时写空字符串。
-6. `pos`、`meaning`、`explanation`、`note` 使用简体中文并保持精炼。
-7. `grammar` 只保留理解本句所需的关键结构。
-8. 没有额外语气、典故或省略信息时，`note` 写空字符串。
-9. 每个字段必须是单行字符串；需要并列时使用中文分号。
-10. 你是个日语老师，整体解释要口语化，讲解清晰。
+3. 不重复目标原句和官方翻译。
+4. `words` 只保留理解本句有帮助的单词、固定表达、缩约形或习语，不机械拆分所有基础词。
+5. `grammar` 只保留理解本句所需的关键结构。
+6. `pos`、`meaning`、`explanation`、`note` 使用简体中文并保持精炼、口语化和清晰。
+7. 没有额外语气、典故、指代或省略信息时，`note` 写空字符串。
+8. 每个字段必须是单行字符串；需要并列时使用中文分号。
+9. 每行只允许固定结构中的字段，不增加或删除字段。
 
-## 输出
+## 日语结果格式
 
-每行严格使用以下结构，不增加或删除字段：
+日语解析使用 `reading`，只写平假名；词面已经全是假名时写空字符串。常见助词归入 `grammar`，不单独机械列词。
 
 ```json
-{"id":"TX_MS_SHO_EX3_0600_0010:0","source_hash":"0123456789ABCDEF","words":[{"surface":"雇う","reading":"やとう","pos":"他动词・五段","meaning":"雇用；付报酬请人做事"}],"grammar":[{"pattern":"普通形＋だと？","explanation":"引用对方的话并反问，表示惊讶、怀疑或不满"}],"note":"わし是男性年长者使用的自称。"}
+{"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"雇う","reading":"やとう","pos":"他动词・五段","meaning":"雇用；付报酬请人做事"}],"grammar":[{"pattern":"普通形＋だと？","explanation":"引用对方的话并反问，表示惊讶、怀疑或不满"}],"note":"わし是男性年长者使用的自称。"}
 ```
 
-字段定义：
+## 英语结果格式
 
-- `source_hash`：原样复制输入值，不自行计算或修改。
-- `words[]`：`surface`、`reading`、`pos`、`meaning`。
-- `grammar[]`：`pattern`、`explanation`。
-- `note`：只放无法归入词汇或语法的语气、文化背景、指代和省略说明。
+英语解析使用 `pronunciation`：写常见词典 IPA，不加两侧斜杠；没有可靠或有必要提示的读音时写空字符串。短语动词、习语和缩约形优先作为完整表达解释，语法项说明本句中的时态、语气、从句、倒装或省略等关键结构。
 
-结果保存到输入清单指定的同名 `scripts\analysis/results/NNNN.jsonl`。完成后运行：
+```json
+{"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"treasure","pronunciation":"ˈtreʒər","pos":"名词","meaning":"宝物；珍视的人或事物"}],"grammar":[{"pattern":"You mean ...?","explanation":"复述对方的意思并确认，常带惊讶或怀疑语气"}],"note":"这里的 treasure 指说话者最珍视的人，而不是财物。"}
+```
+
+结果保存到对应输入清单指定的同名文件：
+
+```text
+scripts/analysis/ja/results/NNNN.jsonl
+scripts/analysis/en/results/NNNN.jsonl
+```
+
+## 校验结果
+
+校验日语或英语的当前完成情况：
 
 ```powershell
-python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis
+python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis\ja
+python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis\en
 ```
 
-全部批次完成时增加 `--require-complete`，校验所有结果文件是否齐全。校验只检查结构、条目数量、顺序和 ID；解析内容由 Agent 负责。
+全部批次完成时增加 `--require-complete`。校验会按 manifest 中的语言检查对应字段，并核对条目数量、顺序、`id` 和 `source_hash`；解析内容本身由 Agent 负责。
 
-## 生成游戏数据
+## 合并查询表
 
-把当前已经完成且结构有效的批次合并为 Mod 可直接查询的运行时文本：
+把当前已经完成且结构有效的批次合并成按 `row_name + text_index` 查询的 UTF-8 TSV：
 
 ```powershell
-python scripts\analysis\tools\dataset.py build-runtime --dataset-dir scripts\analysis --output mod\Scripts\analysis_ja.tsv
+python scripts\analysis\tools\dataset.py build-runtime `
+  --dataset-dir scripts\analysis\ja `
+  --output mod\Scripts\analysis_ja.tsv
+
+python scripts\analysis\tools\dataset.py build-runtime `
+  --dataset-dir scripts\analysis\en `
+  --output mod\Scripts\analysis_en.tsv
 ```
 
-该命令按 `row_name + text_index` 建立索引。尚未生成的批次会被跳过，因此解析进行期间也可以重复生成；全部完成后增加 `--require-complete`。生成的 `mod/Scripts/analysis_ja.tsv` 受 `.gitignore` 排除，只进入玩家发布包。
+尚未生成的批次会被跳过，因此解析进行期间也可以重复合并；要求全部批次完成时增加 `--require-complete`。生成的 TSV 受 `.gitignore` 排除。
 
 ## 查看器
 
-`analysis_viewer.py` 启动只读本地网页，按 `(id, source_hash)` 对照 `scripts/analysis/input` 与 `scripts/analysis/results`，显示日文、官方简体中文、相邻上下文、词汇、语法和补充说明：
+查看器按 `(id, source_hash)` 对照指定语言的输入与结果，显示原文、官方简体中文、相邻上下文、词汇、语法和补充说明：
 
 ```powershell
-python scripts\analysis\tools\analysis_viewer.py --batch 0001
+python scripts\analysis\tools\analysis_viewer.py --language ja --batch 0001
+python scripts\analysis\tools\analysis_viewer.py --language en --batch 0001
 ```
 
-不传 `--batch` 时默认打开 `0001`；网页中可以切换批次和搜索当前批次。查看器不修改输入或结果文件。
+不传 `--language` 和 `--batch` 时默认打开日语 `0001`。也可以用 `--dataset-dir` 指向明确的数据集目录；查看器只读，不修改输入或结果文件。

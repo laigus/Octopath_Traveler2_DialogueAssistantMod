@@ -136,7 +136,7 @@
 </div>
 <script>
 (() => {
-  const state = { batch: "", records: [], filtered: [], selected: -1, loading: false };
+  const state = { batch: "", language: "JA", records: [], filtered: [], selected: -1, loading: false };
   const $ = (id) => document.getElementById(id);
   const batchSelect = $("batchSelect");
   const searchInput = $("searchInput");
@@ -189,13 +189,14 @@
   }
   async function loadBatches() {
     const data = await getJson("/api/batches");
+    state.language = data.language || "JA";
     const batches = data.batches || [];
     batchSelect.replaceChildren();
     batches.forEach((item) => {
       const option = make("option", "", `${item.name}${item.result_exists ? " · 已有解析" : " · 待解析"}`);
       option.value = item.name; batchSelect.appendChild(option);
     });
-    if (!batches.length) throw new Error("analysis/input 中没有 JSONL 批次");
+    if (!batches.length) throw new Error("当前语言的数据集中没有 JSONL 输入批次");
     const queryBatch = new URLSearchParams(location.search).get("batch");
     const preferred = queryBatch && batches.some((item) => item.name === queryBatch) ? queryBatch : (batches.some((item) => item.name === "0001") ? "0001" : batches[0].name);
     batchSelect.value = preferred;
@@ -239,7 +240,7 @@
       line.appendChild(make("span", "record-index", String(index + 1).padStart(4, "0")));
       line.appendChild(make("span", "record-id", emptyText(record.id, "无 ID")));
       button.appendChild(line);
-      button.appendChild(make("div", "record-preview", emptyText(record.ja.replace(/\n/g, " "), "无原文")));
+      button.appendChild(make("div", "record-preview", emptyText(escapeText(record.source_text).replace(/\n/g, " "), "无原文")));
       button.addEventListener("click", () => { state.selected = index; renderList(); renderDetail(index); });
       recordList.appendChild(button);
     });
@@ -254,13 +255,14 @@
     detail.appendChild(meta);
 
     const sourceGrid = make("div", "source-grid");
-    sourceGrid.appendChild(makeCard("日文原文", make("div", "source-text", formatText(record.ja))));
+    const sourceLabel = state.language === "EN" ? "英文原文" : "日文原文";
+    sourceGrid.appendChild(makeCard(sourceLabel, make("div", "source-text", formatText(record.source_text))));
     sourceGrid.appendChild(makeCard("官方简体中文", make("div", "source-text zh", formatText(record.official_zh_cn))));
     detail.appendChild(sourceGrid);
 
     const contextGrid = make("div", "context-grid");
-    const before = record.context_before ? `${record.context_before.ja || ""}\n${record.context_before.official_zh_cn || ""}`.trim() : "（无相邻台词）";
-    const after = record.context_after ? `${record.context_after.ja || ""}\n${record.context_after.official_zh_cn || ""}`.trim() : "（无相邻台词）";
+    const before = record.context_before ? `${record.context_before.source_text || ""}\n${record.context_before.official_zh_cn || ""}`.trim() : "（无相邻台词）";
+    const after = record.context_after ? `${record.context_after.source_text || ""}\n${record.context_after.official_zh_cn || ""}`.trim() : "（无相邻台词）";
     contextGrid.appendChild(makeCard("上一条上下文", make("div", "context-text", before)));
     contextGrid.appendChild(makeCard("下一条上下文", make("div", "context-text", after)));
     detail.appendChild(contextGrid);
@@ -274,7 +276,9 @@
     if (record.issue) analysisSection.appendChild(make("div", "issue", record.issue));
     const words = Array.isArray(analysis?.words) ? analysis.words : [];
     const grammar = Array.isArray(analysis?.grammar) ? analysis.grammar : [];
-    analysisSection.appendChild(makeTable("words", ["词面", "读音", "词性", "释义"], words.map((word) => [emptyText(word.surface), word.reading || "", emptyText(word.pos), emptyText(word.meaning)])));
+    const pronunciationField = state.language === "EN" ? "pronunciation" : "reading";
+    const pronunciationLabel = state.language === "EN" ? "音标" : "读音";
+    analysisSection.appendChild(makeTable("words", ["词面", pronunciationLabel, "词性", "释义"], words.map((word) => [emptyText(word.surface), word[pronunciationField] || "", emptyText(word.pos), emptyText(word.meaning)])));
     analysisSection.appendChild(makeTable("grammar", ["句型", "说明"], grammar.map((item) => [item.pattern, item.explanation].map((value) => emptyText(value)))));
     const note = make("div", "note", analysis ? emptyText(analysis.note) : "（暂无补充说明）");
     analysisSection.appendChild(makeCard("补充说明", note));
