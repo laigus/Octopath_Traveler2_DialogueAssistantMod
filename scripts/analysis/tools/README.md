@@ -71,17 +71,16 @@ python scripts\analysis\tools\dataset.py export `
 3. 不重复目标原句和官方翻译。
 4. `words` 只保留理解本句有帮助的单词、固定表达、缩约形或习语，不机械拆分所有基础词。
 5. `grammar` 只保留理解本句所需的关键结构。
-6. `pos`、`meaning`、`explanation`、`note` 使用简体中文并保持精炼、口语化和清晰。
-7. 没有额外语气、典故、指代或省略信息时，`note` 写空字符串。
-8. 每个字段必须是单行字符串；需要并列时使用中文分号。
-9. 每行只允许固定结构中的字段，不增加或删除字段。
+6. `pos`、`meaning`、`explanation` 使用简体中文并保持精炼、口语化和清晰。
+7. 每个字段必须是单行字符串；需要并列时使用中文分号。
+8. 每行只允许固定结构中的字段，不增加或删除字段。
 
 ## 日语结果格式
 
 日语解析使用 `reading`，只写平假名；词面已经全是假名时写空字符串。常见助词归入 `grammar`，不单独机械列词。
 
 ```json
-{"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"雇う","reading":"やとう","pos":"他动词・五段","meaning":"雇用；付报酬请人做事"}],"grammar":[{"pattern":"普通形＋だと？","explanation":"引用对方的话并反问，表示惊讶、怀疑或不满"}],"note":"わし是男性年长者使用的自称。"}
+{"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"雇う","reading":"やとう","pos":"他动词・五段","meaning":"雇用；付报酬请人做事"}],"grammar":[{"pattern":"普通形＋だと？","explanation":"引用对方的话并反问，表示惊讶、怀疑或不满"}]}
 ```
 
 ## 英语结果格式
@@ -89,7 +88,7 @@ python scripts\analysis\tools\dataset.py export `
 英语解析使用 `pronunciation`：写常见词典 IPA，不加两侧斜杠；没有可靠或有必要提示的读音时写空字符串。短语动词、习语和缩约形优先作为完整表达解释，语法项说明本句中的时态、语气、从句、倒装或省略等关键结构。
 
 ```json
-{"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"treasure","pronunciation":"ˈtreʒər","pos":"名词","meaning":"宝物；珍视的人或事物"}],"grammar":[{"pattern":"You mean ...?","explanation":"复述对方的意思并确认，常带惊讶或怀疑语气"}],"note":"这里的 treasure 指说话者最珍视的人，而不是财物。"}
+{"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"treasure","pronunciation":"ˈtreʒər","pos":"名词","meaning":"宝物；珍视的人或事物"}],"grammar":[{"pattern":"You mean ...?","explanation":"复述对方的意思并确认，常带惊讶或怀疑语气"}]}
 ```
 
 结果保存到对应输入清单指定的同名文件：
@@ -128,7 +127,7 @@ python scripts\analysis\tools\dataset.py build-runtime `
 
 ## 查看器
 
-查看器按 `(id, source_hash)` 对照指定语言的输入与结果，显示原文、官方简体中文、相邻上下文、词汇、语法和补充说明：
+查看器按 `(id, source_hash)` 对照指定语言的输入与结果，显示原文、官方简体中文、相邻上下文、词汇和语法：
 
 ```powershell
 python scripts\analysis\tools\analysis_viewer.py --language ja --batch 0001

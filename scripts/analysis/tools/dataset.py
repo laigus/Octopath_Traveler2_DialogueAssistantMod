@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = 1
-RESULT_KEYS = {"id", "source_hash", "words", "grammar", "note"}
+RESULT_KEYS = {"id", "source_hash", "words", "grammar"}
 GRAMMAR_KEYS = {"pattern", "explanation"}
 LANGUAGE_SPECS = {
     "JA": {
@@ -212,7 +212,6 @@ def validate_result_item(
         raise RuntimeError(f"{source}:{line_number} result keys must be {sorted(RESULT_KEYS)}")
     require_single_line_string(item["id"], "id", source, line_number)
     require_single_line_string(item["source_hash"], "source_hash", source, line_number)
-    require_single_line_string(item["note"], "note", source, line_number)
     if not isinstance(item["words"], list):
         raise RuntimeError(f"{source}:{line_number} words must be an array")
     if not isinstance(item["grammar"], list):
@@ -324,10 +323,7 @@ def format_analysis(item: dict[str, object], language: str) -> str:
             explanation = str(entry.get("explanation", ""))
             lines.append(f"{pattern}：{explanation}" if explanation else pattern)
 
-    note = str(item["note"])
-    if note:
-        lines.extend(("【补充】", note))
-    return "\n".join(lines) if lines else "当前台词没有额外解析。"
+    return "\n".join(lines) if lines else "当前台词没有需要说明的词汇或语法。"
 
 
 def escape_runtime_field(value: str) -> str:

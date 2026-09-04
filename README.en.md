@@ -7,7 +7,7 @@ A dialogue-focused language-learning mod for *OCTOPATH TRAVELER II*. It includes
 - **Replay current line**: Replays the current dialogue box, original voice, camera, and character performance. The default key is `R`.
 - **Previous line**: Replays the complete performance for the previous line, then returns to the current story position. The default key is `G`.
 - **Official translation**: Displays the game's official text for the current line in the upper-right corner during story scenes. The key is configurable and defaults to `T`; the default translation language is Simplified Chinese.
-- **Language analysis**: Displays vocabulary, readings, parts of speech, grammar, and supplementary notes for the current Japanese line. The key is configurable and defaults to `V`; the default analysis language is Japanese.
+- **Language analysis**: Displays vocabulary, readings, parts of speech, and grammar for the current Japanese line. The key is configurable and defaults to `V`; the default analysis language is Japanese.
 - **Key hints**: Shows shortcut hints in the corner during story scenes.
 - **Configuration**: Adds a configuration category to the in-game Options menu for feature toggles, shortcut keys, translation language, and analysis language.
 

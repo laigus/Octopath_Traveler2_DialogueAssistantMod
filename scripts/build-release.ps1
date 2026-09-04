@@ -45,14 +45,26 @@ if ($missing.Count -gt 0) {
 if (-not $Version) {
     $git = Get-Command "git.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($git) {
-        $tag = & $git.Source -C $projectRoot describe --tags --exact-match HEAD 2>$null
-        if ($LASTEXITCODE -eq 0 -and $tag) {
-            $Version = [string]$tag
-        } else {
-            $shortCommit = & $git.Source -C $projectRoot rev-parse --short HEAD 2>$null
-            if ($LASTEXITCODE -eq 0 -and $shortCommit) {
-                $Version = "$shortCommit-dev"
+        $tag = ""
+        $tagExitCode = 1
+        $shortCommit = ""
+        $shortCommitExitCode = 1
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "SilentlyContinue"
+            $tag = & $git.Source -C $projectRoot describe --tags --exact-match HEAD 2>$null
+            $tagExitCode = $LASTEXITCODE
+            if ($tagExitCode -ne 0 -or -not $tag) {
+                $shortCommit = & $git.Source -C $projectRoot rev-parse --short HEAD 2>$null
+                $shortCommitExitCode = $LASTEXITCODE
             }
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($tagExitCode -eq 0 -and $tag) {
+            $Version = [string]$tag
+        } elseif ($shortCommitExitCode -eq 0 -and $shortCommit) {
+            $Version = "$shortCommit-dev"
         }
     }
 }

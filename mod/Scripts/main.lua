@@ -1,5 +1,5 @@
 local MOD_NAME = "OctopathDialogueAssistant"
-local VERSION = "0.14.0"
+local VERSION = "1.0.0"
 local MAX_HISTORY = 12
 local MENU_GUIDE_PACKAGE = "/Game/UserInterface/Common/BP/MenuGuideItem"
 local MENU_GUIDE_CLASS = MENU_GUIDE_PACKAGE .. ".MenuGuideItem_C"

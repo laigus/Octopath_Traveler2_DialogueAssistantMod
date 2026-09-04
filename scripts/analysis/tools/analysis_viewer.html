@@ -94,7 +94,6 @@
     .words th:nth-child(1) { width: 17%; } .words th:nth-child(2) { width: 15%; } .words th:nth-child(3) { width: 21%; } .words th:nth-child(4) { width: 47%; }
     .grammar th:nth-child(1) { width: 29%; } .grammar th:nth-child(2) { width: 71%; }
     .empty-row { color: var(--muted); }
-    .note { min-height: 58px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.7; }
     .footer-hint { margin-top: 17px; color: var(--muted); font-size: 11px; }
     .error { padding: 40px 20px; color: var(--danger); }
     @media (max-width: 950px) {
@@ -280,8 +279,6 @@
     const pronunciationLabel = state.language === "EN" ? "音标" : "读音";
     analysisSection.appendChild(makeTable("words", ["词面", pronunciationLabel, "词性", "释义"], words.map((word) => [emptyText(word.surface), word[pronunciationField] || "", emptyText(word.pos), emptyText(word.meaning)])));
     analysisSection.appendChild(makeTable("grammar", ["句型", "说明"], grammar.map((item) => [item.pattern, item.explanation].map((value) => emptyText(value)))));
-    const note = make("div", "note", analysis ? emptyText(analysis.note) : "（暂无补充说明）");
-    analysisSection.appendChild(makeCard("补充说明", note));
     detail.appendChild(analysisSection);
     detail.appendChild(make("div", "footer-hint", "快捷键：↑ / ↓ 切换记录；Ctrl+F 聚焦搜索；Esc 清除搜索。数据来自本机 JSONL，只读展示。"));
   }
