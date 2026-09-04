@@ -26,6 +26,14 @@
 
 UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放时只在活动数组长度与记录一致时逐元素写回，保留显式换行和语音标签。
 
+## `EventManagerBP_C`
+
+- `StartTalk` 返回布尔结果。
+- `UpdateTalk(DeltaTime)` 每帧调用原生气泡系统并返回布尔结果；该结果参与对话完成判断。
+- `UpdateTalk` 还检查活动 UI 栈，并在活动对象不是当前 `BalloonBundle` 时重新压入对话对象。
+
+运行时不在 `StartTalk` 或 `UpdateTalk` 上注册 Lua hook。台词观察使用 `TalkText_C:PlayVoice`，原生对话结束信号和玩家控制恢复路径不经过 Mod 回调。
+
 ## `Balloon_00_C`
 
 - `BalloonParam.Text.Names`

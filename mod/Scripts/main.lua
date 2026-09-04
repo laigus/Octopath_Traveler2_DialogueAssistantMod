@@ -151,7 +151,6 @@ local state = {
     mod_chrome_snapshot = nil,
     settings_capture = nil,
     option_ui_error = "",
-    last_flow = "",
     last_speed_change = "",
 }
 
@@ -3426,27 +3425,7 @@ local function capture_talk_text(context)
     dump_candidate_properties(object, "talk")
 end
 
-local function record_flow(name, context)
-    state.last_flow = name
-    log("flow=" .. name)
-    dump_candidate_properties(context, name)
-end
-
 local hook_specs = {
-    {
-        name = "StartTalk",
-        path = "/Game/Event/BP/EventManagerBP.EventManagerBP_C:StartTalk",
-        callback = function(context)
-            record_flow("StartTalk", context)
-        end,
-    },
-    {
-        name = "UpdateTalk",
-        path = "/Game/Event/BP/EventManagerBP.EventManagerBP_C:UpdateTalk",
-        callback = function(context)
-            record_flow("UpdateTalk", context)
-        end,
-    },
     {
         name = "PlayVoice",
         path = "/Game/UserInterface/Balloon/BP/TalkText.TalkText_C:PlayVoice",
@@ -3541,9 +3520,8 @@ local function dump_state()
     local current = state.current or {}
     local previous = state.previous or {}
     log(string.format(
-        "state version=%s flow=%s history=%d history_index=%d current_voice=%s current_index=%s current_text=%s previous_voice=%s previous_index=%s previous_text=%s",
+        "state version=%s history=%d history_index=%d current_voice=%s current_index=%s current_text=%s previous_voice=%s previous_index=%s previous_text=%s",
         VERSION,
-        state.last_flow,
         #state.history,
         state.history_index,
         current.voice_label or "",

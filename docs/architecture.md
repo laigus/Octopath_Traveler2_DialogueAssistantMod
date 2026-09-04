@@ -229,6 +229,8 @@ mod/runtime/UE4SS/3.0.1/UE4SS_v3.0.1.zip
 
 当前实现使用 `JumpToSeconds` 定位到目标台词暂停帧，恢复镜头和角色时间轴状态；文本和语音由活动 `TalkText` 原地重置。每句只绑定唯一变化的 RichEvent Player。
 
+运行时捕获入口是 `TalkText_C:PlayVoice`。`EventManagerBP_C:StartTalk` 和每帧执行的 `EventManagerBP_C:UpdateTalk` 都返回控制原生流程的布尔结果，因此不进入 Lua hook 链；普通对话的完成、活动 UI 栈退出和玩家控制恢复完全保留给游戏。
+
 ## 运行时状态
 
 ```text
