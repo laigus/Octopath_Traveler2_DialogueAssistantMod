@@ -11,6 +11,8 @@ A dialogue-focused language-learning mod for *OCTOPATH TRAVELER II*. It includes
 - **Key hints**: Shows shortcut hints in the corner during story scenes.
 - **Configuration**: Adds a configuration category to the in-game Options menu for feature toggles, shortcut keys, translation language, and analysis language.
 
+![Replay, official translation, and language analysis shown in game](assets/1.png)
+
 ## In-Game Mod Settings
 
 Open the game's Options menu and select the `DIALOGUE ASSISTANT` category with the native-style icon. The mod creates eight settings in the right-hand list:
@@ -25,6 +27,8 @@ Open the game's Options menu and select the `DIALOGUE ASSISTANT` category with t
 - `ANALYSIS KEY`: Confirm the item, then press any letter to assign the show/hide analysis shortcut. It is currently available only when the analysis language is Japanese.
 
 The translation and analysis language selectors use the same nine-language list as the game's native `Text Language` setting: Japanese, English, Italian, French, German, Spanish, Traditional Chinese, Simplified Chinese, and Korean. Only Japanese analysis data is currently included. Selecting another analysis language disables `ANALYSIS KEY`, its shortcut hint, and the analysis action.
+
+![In-Game Settings](assets/2.png)
 
 ## Supported Version
 

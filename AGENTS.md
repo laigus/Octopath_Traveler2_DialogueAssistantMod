@@ -22,6 +22,7 @@
 
 ## 目录职责
 
+- `assets/`：README 使用的图片，纳入 Git，并由发布脚本按原相对路径放入发布 ZIP。
 - `mod/`：发布暂存输入；`Scripts/` 中的 `main.lua` 与 `config.lua` 是源码，查询 TSV 是本机构建结果；`pak/` 中的 PAK 和 `runtime/UE4SS/` 中的第三方运行包同样是本机构建或获取结果。安装脚本把这些内容映射到各自的游戏目录。
 - `temp/`：本机分析中间文件，不纳入 Git。
 - `scripts/install.ps1`、`uninstall.ps1` 与 `common.ps1`：安装、卸载和共享安装约束；其他根脚本负责编排运行时获取与发布打包。

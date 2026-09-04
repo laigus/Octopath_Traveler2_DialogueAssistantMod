@@ -29,6 +29,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 
 | 路径 | 来源 | Git | 发布包 |
 | --- | --- | --- | --- |
+| `assets/` | README 使用的图片 | 纳入 | 包含 |
 | `mod/Scripts/main.lua`、`config.lua` | 手工维护 | 纳入 | 包含 |
 | `scripts/build_pak/source/` | 经 UAssetGUI 编辑的四个 PAK 源资产 | 纳入 | 不直接包含 |
 | `mod/Scripts/official_*.tsv` | 从受支持游戏 build 生成 | 忽略 | 包含 |
@@ -234,6 +235,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version "1.0
 OctopathDialogueAssistantInstaller.exe
 README.md
 README.en.md
+assets/*
 scripts/common.ps1
 scripts/install.ps1
 scripts/uninstall.ps1

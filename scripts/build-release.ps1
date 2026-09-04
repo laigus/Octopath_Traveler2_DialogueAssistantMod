@@ -36,6 +36,18 @@ foreach ($language in $officialLanguages) {
     $requiredFiles.Add((Join-Path $projectRoot "mod\Scripts\official_$language.tsv"))
 }
 
+$assetsRoot = Join-Path $projectRoot "assets"
+$assetFiles = @()
+if (Test-Path -LiteralPath $assetsRoot -PathType Container) {
+    $assetFiles = @(Get-ChildItem -LiteralPath $assetsRoot -Recurse -File)
+}
+if ($assetFiles.Count -eq 0) {
+    throw "README assets are missing: assets"
+}
+foreach ($assetFile in $assetFiles) {
+    $requiredFiles.Add($assetFile.FullName)
+}
+
 $missing = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
 if ($missing.Count -gt 0) {
     $relativeMissing = $missing | ForEach-Object { $_.Substring($projectRoot.Length + 1) }
@@ -100,6 +112,10 @@ try {
     Copy-ReleaseFile "OctopathDialogueAssistantInstaller.exe" "OctopathDialogueAssistantInstaller.exe"
     Copy-ReleaseFile "README.md" "README.md"
     Copy-ReleaseFile "README.en.md" "README.en.md"
+    foreach ($assetFile in $assetFiles) {
+        $assetRelative = $assetFile.FullName.Substring($projectRoot.Length + 1)
+        Copy-ReleaseFile $assetRelative $assetRelative
+    }
     Copy-ReleaseFile "scripts\common.ps1" "scripts\common.ps1"
     Copy-ReleaseFile "scripts\install.ps1" "scripts\install.ps1"
     Copy-ReleaseFile "scripts\uninstall.ps1" "scripts\uninstall.ps1"
