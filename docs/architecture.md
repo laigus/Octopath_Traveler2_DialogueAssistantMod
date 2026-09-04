@@ -68,7 +68,41 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 
 运行时代码不访问 `SaveGames`，也不写剧情旗标、任务、物品、金钱或全局剧情执行索引。
 
-### 3. 生成官方文本查询文件
+### 3. 按修改内容选择步骤
+
+先区分三个动作：
+
+- **更新 PAK**：把 `scripts/build_pak/source/` 中的四个 Unreal 资产重新打成 `mod/pak/OctopathDialogueAssistant_P.pak`。Lua、配置和 TSV 都不在这个 PAK 中。
+- **构建安装器**：把 `scripts/installer/Program.cs` 编译为 `OctopathDialogueAssistantInstaller.exe`。该 EXE 只是相邻 `scripts/install.ps1` 与 `scripts/uninstall.ps1` 的图形前端，不内嵌 Lua、TSV、PAK 或 UE4SS。
+- **生成发布包**：`scripts/build-release.ps1` 会统一重新生成 PAK、准备 UE4SS、重新编译安装器并创建 ZIP，因此正式发布前不需要先手动执行 PAK 和安装器的单项构建命令。该命令仍需能够从 `PATH`、`REPAK_PATH` 或 `-RepakPath` 找到 repak；九种官方文本 TSV 和日语解析 TSV 不由该脚本生成，也必须已经存在。
+
+| 修改内容 | 要单独更新 PAK | 要单独构建安装器 | 更新本机游戏用于验证 | 生成发布 ZIP |
+| --- | --- | --- | --- | --- |
+| `mod/Scripts/main.lua` | 否 | 否 | 运行 `scripts/install.ps1` | 直接运行 `scripts/build-release.ps1` |
+| `mod/Scripts/config.lua` | 否 | 否 | 只影响不存在配置时的新安装；更新安装会保留现有用户配置 | 直接运行 `scripts/build-release.ps1` |
+| `mod/Scripts/official_*.tsv` 的数据来源或目标游戏 build | 否 | 否 | 先运行 `scripts/build_official_texts/build.ps1`，再运行 `scripts/install.ps1` | 先生成九种 TSV，再运行 `scripts/build-release.ps1` |
+| `scripts/analysis/{ja,en}/` 的输入、结果或合并逻辑 | 否 | 否 | 先校验并用 `dataset.py build-runtime` 更新运行时 TSV，再运行 `scripts/install.ps1` | 先生成所需运行时 TSV，再运行 `scripts/build-release.ps1` |
+| `scripts/build_pak/source/` 中的设置页或字体资产 | 是 | 否 | 先运行 `scripts/build_pak/build.ps1`，再运行 `scripts/install.ps1` | 直接运行 `scripts/build-release.ps1`，它会重新生成 PAK |
+| `scripts/installer/Program.cs` | 否 | 是 | 运行 `scripts/installer/build.ps1` 后直接测试 EXE | 直接运行 `scripts/build-release.ps1`，它会重新编译安装器 |
+| `scripts/install.ps1`、`uninstall.ps1` 或 `common.ps1` | 否 | 否；EXE 会在运行时调用这些脚本 | 只运行本次修改涉及的安装或卸载命令 | 直接运行 `scripts/build-release.ps1`，更新后的脚本会进入 ZIP |
+| `mod/runtime/UE4SS-settings.ini` 或 `scripts/common.ps1` 中固定的 UE4SS 版本 | 否 | 否 | 按改动准备对应运行时，再验证安装 | 运行 `scripts/build-release.ps1`；它会下载或复用并校验固定运行时 |
+| `README.md` 或 `README.en.md` | 否 | 否 | 不安装 | 只有需要把新 README 放进发布 ZIP 时才重新打包 |
+| `docs/` | 否 | 否 | 不安装 | 不进入发布 ZIP，只需提交到源码仓库 |
+
+最常用的两条命令是：
+
+```powershell
+# 把当前工作区的运行文件更新到本机游戏；不会生成发布 ZIP
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 `
+  -GameRoot "<Steam common 下的 Octopath_Traveler2 目录>"
+
+# 生成正式发布 ZIP；PAK、UE4SS 和图形安装器由该命令统一处理
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version "<版本号>"
+```
+
+因此，只修改 `main.lua` 时：本机验证只需重新运行安装命令；要生成对外发布包时，只需运行一次发布命令，不需要先单独生成 PAK，也不需要先单独构建安装器。发布脚本仍会为保证包内组件一致而重新生成这两项。
+
+### 4. 生成官方文本查询文件
 
 维护者从 [repak Releases](https://github.com/trumank/repak/releases) 准备 `repak 0.2.3`，从 [UAssetGUI Releases](https://github.com/atenfyr/UAssetGUI/releases) 准备 `UAssetGUI 1.1.0`，并安装 Python 3。工具放在开发者自己的工具目录或加入 `PATH`，不复制进仓库。然后从仓库根目录运行：
 
@@ -81,7 +115,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_official_texts\build.ps1 
 
 脚本从目标 build 的 `TalkData_JA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 与 `KR` 生成对应的 `official_*.tsv`，临时解包内容只进入 `temp/official-texts/`，成功后直接更新 `mod/Scripts/`。这九个生成文件被 Git 忽略，只进入最终发布包，不在用户安装时生成。
 
-### 4. 生成日语与英语解析数据
+### 5. 生成日语与英语解析数据
 
 日语和英语分别使用 `scripts/analysis/ja/` 与 `scripts/analysis/en/`，每套数据集都有自己的 `input/`、`results/` 和 `manifest.json`。输入由对应官方文本与简体中文官方文本生成：
 
@@ -126,7 +160,7 @@ python scripts\analysis\tools\dataset.py build-runtime `
 
 `build-runtime` 同样能把英语数据集合并为带 `EN` 标识的 `analysis_en.tsv`，但当前游戏运行时和发布包仍只消费日语查询表。要在新开发机重建任一数据集，需要先恢复该开发者自己的对应语言工作区。
 
-### 5. 更新覆盖 PAK
+### 6. 更新覆盖 PAK
 
 当前覆盖 PAK 只包含以下四个虚拟文件：
 
@@ -148,7 +182,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_pak\build.ps1 `
 
 也可以把 `repak.exe` 加入 `PATH` 或设置 `REPAK_PATH` 后省略参数。脚本固定使用 UE4 V11、Zlib、mount point `../../../` 和 path hash seed `836401085`，校验源目录与生成 PAK 都只有上述四项，然后写入 Git 忽略的 `mod/pak/OctopathDialogueAssistant_P.pak`。
 
-### 6. 准备 UE4SS 与图形安装器
+### 7. 准备 UE4SS 与图形安装器
 
 UE4SS 运行包不进入 Git。以下命令从 `scripts/common.ps1` 固定的上游 URL 下载 UE4SS 3.0.1，校验 SHA256 后写入 `mod/runtime/UE4SS/3.0.1/`；文件已经存在且哈希一致时直接复用：
 
@@ -164,7 +198,7 @@ powershell -ExecutionPolicy Bypass -File scripts\installer\build.ps1
 
 构建结果固定为 Git 忽略的根目录 `OctopathDialogueAssistantInstaller.exe`。
 
-### 7. 安装与针对性验证
+### 8. 安装与针对性验证
 
 完成 TSV、PAK、UE4SS 和安装器准备后，退出游戏，可用图形安装器选择游戏目录并执行安装，也可以直接安装当前工作区：
 
@@ -175,7 +209,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 `
 
 安装器只复制工作区中的 UE4SS、Lua、配置、覆盖 PAK、九种官方文本和日语解析数据。启动游戏后只验证本次改动涉及的流程；运行时问题查看游戏 `Binaries/Win64/UE4SS.log`。常规开发不执行安装、卸载、重装往返测试，也不生成验证记录、补丁副本或测试制品。
 
-### 8. 一键生成发布包
+### 9. 一键生成发布包
 
 正式打包前，确保九种 `official_*.tsv` 和完整的 `analysis_ja.tsv` 已按前述步骤生成。repak 已加入 `PATH` 或设置 `REPAK_PATH` 时，从仓库根目录运行：
 
@@ -214,7 +248,7 @@ mod/runtime/UE4SS/3.0.1/UE4SS_v3.0.1.zip
 
 `scripts/build_official_texts/`、`scripts/analysis/`、`scripts/build_pak/`、`scripts/installer/`、`docs/` 和 `.git` 都属于开发内容，不进入玩家安装包。将 `dist/` 中的 ZIP 作为 GitHub Release 资产上传；GitHub 自动生成的 Source code ZIP 只是源码快照，不作为安装包。
 
-### 9. 提交边界
+### 10. 提交边界
 
 提交或打包前确认：
 
