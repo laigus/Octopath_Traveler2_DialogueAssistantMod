@@ -48,19 +48,20 @@ python scripts\analysis\tools\dataset.py export `
 每个输入文件是 JSONL，每行是一条独立台词。日语记录使用 `ja`：
 
 ```json
-{"id":"ROW_NAME:0","row_name":"ROW_NAME","text_index":0,"ja":"対象の日本語台詞","official_zh_cn":"官方简体中文台词","context_before":null,"context_after":{"ja":"下一条日语台词","official_zh_cn":"下一条官方简体中文台词"},"source_hash":"0123456789ABCDEF"}
+{"id":"ROW_NAME:0","row_name":"ROW_NAME","text_index":0,"ja":"対象の日本語台詞","official_zh_cn":"官方简体中文台词","source_hash":"0123456789ABCDEF"}
 ```
 
 英语记录使用 `en`：
 
 ```json
-{"id":"ROW_NAME:0","row_name":"ROW_NAME","text_index":0,"en":"The target English line.","official_zh_cn":"官方简体中文台词","context_before":null,"context_after":{"en":"The next English line.","official_zh_cn":"下一条官方简体中文台词"},"source_hash":"0123456789ABCDEF"}
+{"id":"ROW_NAME:0","row_name":"ROW_NAME","text_index":0,"en":"The target English line.","official_zh_cn":"官方简体中文台词","source_hash":"0123456789ABCDEF"}
 ```
 
 - `id` 和 `source_hash` 是结果必须原样返回的稳定键。
-- `ja` 或 `en` 是唯一需要解析的目标文本。
-- `official_zh_cn` 只用于消歧，不需要重新翻译或改写。
-- `context_before`、`context_after` 只用于判断省略、指代和语气，不属于目标结果。
+- `ja` 或 `en` 是解析原文。
+- `official_zh_cn` 是同句游戏官方简体中文，用于确认词义。
+- 解析范围是当前句的词汇和语法。
+- 纯标点台词的 `words`、`grammar` 必须为空数组。提交前逐条对照当前原句，不能只核对 ID 和哈希。
 
 ## Agent 通用指令
 
@@ -68,16 +69,20 @@ python scripts\analysis\tools\dataset.py export `
 
 1. 按输入顺序为每一行输出一行 JSON，数量、顺序、`id` 和 `source_hash` 完全一致。
 2. 不输出 Markdown、代码围栏、开场白、总结或进度说明。
-3. 不重复目标原句和官方翻译。
-4. `words` 只保留理解本句有帮助的单词、固定表达、缩约形或习语，不机械拆分所有基础词。
-5. `grammar` 只保留理解本句所需的关键结构。
-6. `pos`、`meaning`、`explanation` 使用简体中文并保持精炼、口语化和清晰。
-7. 每个字段必须是单行字符串；需要并列时使用中文分号。
-8. 每行只允许固定结构中的字段，不增加或删除字段。
+3. 不在结果中重复目标原句和官方翻译。
+4. 解析当前记录的 `ja` 或 `en`，输出当前句的词汇和语法信息。
+5. `words` 列出该句的单词，说明词性和含义。包含汉字的单词必须要列出。
+6. `grammar` 列出句中的语法点，并说明结构、含义和用法。
+7. 同一语言点只解释一次。词汇化的固定表达、缩约形和习语归入 `words`；可套用的句型、活用、助词组合和语法结构归入 `grammar`。边界模糊时选择更适合的一类。
+8. `pos`、`meaning`、`explanation` 使用简体中文并保持精炼、口语化和清晰。
+9. 每个字段必须是单行字符串；需要并列时使用中文分号。
+10. 每行只允许固定结构中的字段，不增加或删除字段。
 
 ## 日语结果格式
 
-日语解析使用 `reading`，只写平假名；词面已经全是假名时写空字符串。常见助词归入 `grammar`，不单独机械列词。
+日语 `words` 列出该句的单词，每个条目对应“词语（汉字假名注音）—词性，含义”。词面含有汉字时， `reading`写平假名读音；词面已经全是假名时，`reading` 写空字符串。助词作为句法结构发挥作用时归入 `grammar`。
+
+日语 `grammar` 列出句中的语法点，每条说明结构、含义和用法。已在 `words` 中作为固定表达完整解释的内容不再写入 `grammar`。
 
 ```json
 {"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"雇う","reading":"やとう","pos":"他动词・五段","meaning":"雇用；付报酬请人做事"}],"grammar":[{"pattern":"普通形＋だと？","explanation":"引用对方的话并反问，表示惊讶、怀疑或不满"}]}
@@ -85,7 +90,7 @@ python scripts\analysis\tools\dataset.py export `
 
 ## 英语结果格式
 
-英语解析使用 `pronunciation`：写常见词典 IPA，不加两侧斜杠；没有可靠或有必要提示的读音时写空字符串。短语动词、习语和缩约形优先作为完整表达解释，语法项说明本句中的时态、语气、从句、倒装或省略等关键结构。
+英语解析使用 `pronunciation`：写常见词典 IPA，不加两侧斜杠；没有可靠读音时写空字符串。短语动词、习语和缩约形作为完整表达解释；语法项分别说明本句中的时态、语气、从句、倒装或省略等结构，且不重复 `words` 已解释的内容。
 
 ```json
 {"id":"ROW_NAME:0","source_hash":"0123456789ABCDEF","words":[{"surface":"treasure","pronunciation":"ˈtreʒər","pos":"名词","meaning":"宝物；珍视的人或事物"}],"grammar":[{"pattern":"You mean ...?","explanation":"复述对方的意思并确认，常带惊讶或怀疑语气"}]}
@@ -127,7 +132,7 @@ python scripts\analysis\tools\dataset.py build-runtime `
 
 ## 查看器
 
-查看器按 `(id, source_hash)` 对照指定语言的输入与结果，显示原文、官方简体中文、相邻上下文、词汇和语法：
+查看器按 `(id, source_hash)` 对照指定语言的输入与结果，显示当前原文、同句官方简体中文、词汇和语法：
 
 ```powershell
 python scripts\analysis\tools\analysis_viewer.py --language ja --batch 0001

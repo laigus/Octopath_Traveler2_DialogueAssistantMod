@@ -1,11 +1,10 @@
 import argparse
 import hashlib
 import json
-import re
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RESULT_KEYS = {"id", "source_hash", "words", "grammar"}
 GRAMMAR_KEYS = {"pattern", "explanation"}
 LANGUAGE_SPECS = {
@@ -72,30 +71,6 @@ def load_dialogue_table(path: Path) -> tuple[list[tuple[str, int, str]], dict[tu
     return ordered, indexed
 
 
-def context_group(row_name: str) -> str:
-    match = re.fullmatch(r"(.+)_\d+", row_name)
-    return match.group(1) if match else row_name
-
-
-def context_value(
-    ordered: list[tuple[str, int, str]],
-    translations: dict[tuple[str, int], str],
-    source_index: int,
-    candidate_index: int,
-    input_field: str,
-) -> dict[str, str] | None:
-    if candidate_index < 0 or candidate_index >= len(ordered):
-        return None
-    source_row = ordered[source_index][0]
-    row_name, text_index, source_text = ordered[candidate_index]
-    if context_group(source_row) != context_group(row_name):
-        return None
-    return {
-        input_field: source_text,
-        "official_zh_cn": translations.get((row_name, text_index), ""),
-    }
-
-
 def source_hash(item: dict[str, object]) -> str:
     encoded = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16].upper()
@@ -144,22 +119,15 @@ def export_dataset(args: argparse.Namespace) -> None:
     ordered, _ = load_dialogue_table(source_path)
     _, translations = load_dialogue_table(zh_path)
     rows: list[dict[str, object]] = []
-    for source_index, (row_name, text_index, source_text) in enumerate(ordered):
+    for row_name, text_index, source_text in ordered:
         if not source_text.strip():
             continue
-        key = (row_name, text_index)
         item: dict[str, object] = {
             "id": f"{row_name}:{text_index}",
             "row_name": row_name,
             "text_index": text_index,
             input_field: source_text,
-            "official_zh_cn": translations.get(key, ""),
-            "context_before": context_value(
-                ordered, translations, source_index, source_index - 1, input_field
-            ),
-            "context_after": context_value(
-                ordered, translations, source_index, source_index + 1, input_field
-            ),
+            "official_zh_cn": translations.get((row_name, text_index), ""),
         }
         item["source_hash"] = source_hash(item)
         rows.append(item)
@@ -233,6 +201,26 @@ def validate_result_item(
     return item["id"], item["source_hash"]
 
 
+def validate_input_item(
+    item: object, source: Path, line_number: int, language: str
+) -> tuple[str, str]:
+    input_field = str(LANGUAGE_SPECS[language]["input_field"])
+    expected_keys = {
+        "id", "row_name", "text_index", input_field, "official_zh_cn", "source_hash"
+    }
+    if not isinstance(item, dict) or set(item) != expected_keys:
+        raise RuntimeError(f"{source}:{line_number} input keys must be {sorted(expected_keys)}")
+    for field in ("id", "row_name", "source_hash"):
+        require_single_line_string(item[field], field, source, line_number)
+    if not isinstance(item[input_field], str):
+        raise RuntimeError(f"{source}:{line_number} field {input_field} must be a string")
+    if not isinstance(item["official_zh_cn"], str):
+        raise RuntimeError(f"{source}:{line_number} field official_zh_cn must be a string")
+    if not isinstance(item["text_index"], int):
+        raise RuntimeError(f"{source}:{line_number} field text_index must be an integer")
+    return item["id"], item["source_hash"]
+
+
 def read_identities(path: Path, result: bool, language: str) -> list[tuple[str, str]]:
     identities: list[tuple[str, str]] = []
     with path.open("r", encoding="utf-8") as source:
@@ -243,11 +231,7 @@ def read_identities(path: Path, result: bool, language: str) -> list[tuple[str, 
             if result:
                 identities.append(validate_result_item(item, path, line_number, language))
             else:
-                item_id = item.get("id") if isinstance(item, dict) else None
-                item_hash = item.get("source_hash") if isinstance(item, dict) else None
-                if not isinstance(item_id, str) or not isinstance(item_hash, str):
-                    raise RuntimeError(f"{path}:{line_number} input identity is missing")
-                identities.append((item_id, item_hash))
+                identities.append(validate_input_item(item, path, line_number, language))
     return identities
 
 
@@ -255,6 +239,10 @@ def read_manifest(dataset_dir: Path) -> tuple[dict[str, object], str]:
     manifest = json.loads((dataset_dir / "manifest.json").read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise RuntimeError("Dataset manifest must be a JSON object")
+    if manifest.get("schema_version") != SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Unsupported dataset schema: {manifest.get('schema_version')}; expected {SCHEMA_VERSION}"
+        )
     language = manifest.get("language")
     if language not in LANGUAGE_SPECS:
         raise RuntimeError(f"Unsupported or missing dataset language: {language}")

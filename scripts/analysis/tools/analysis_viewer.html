@@ -74,13 +74,12 @@
     .meta { display: flex; justify-content: space-between; gap: 18px; align-items: baseline; padding-bottom: 11px; border-bottom: 1px solid var(--line); }
     .meta h2 { margin: 0; font-size: 18px; }
     .meta-code { color: var(--muted); font: 12px/1.7 "Consolas", monospace; text-align: right; word-break: break-all; }
-    .source-grid, .context-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-top: 15px; }
+    .source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-top: 15px; }
     .card { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--panel); }
     .card-title { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; background: var(--panel-soft); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 700; }
     .card-title small { color: var(--muted); font-weight: 400; }
     .source-text { min-height: 122px; padding: 16px; white-space: pre-wrap; word-break: break-word; font-size: 17px; line-height: 1.85; }
     .source-text.zh { font-size: 15px; }
-    .context-text { min-height: 67px; padding: 11px 13px; white-space: pre-wrap; word-break: break-word; color: #445267; font-size: 12px; line-height: 1.7; }
     .section { margin-top: 20px; }
     .section-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px; }
     .section-head h3 { margin: 0; font-size: 15px; }
@@ -106,7 +105,6 @@
     @media (max-width: 650px) {
       .topbar { padding: 13px 14px; }
       .main { padding: 10px; }
-      .source-grid, .context-grid { grid-template-columns: 1fr; }
       .detail { padding: 16px; }
       input[type="search"] { width: 100%; }
       .meta { display: block; } .meta-code { margin-top: 8px; text-align: left; }
@@ -256,15 +254,8 @@
     const sourceGrid = make("div", "source-grid");
     const sourceLabel = state.language === "EN" ? "英文原文" : "日文原文";
     sourceGrid.appendChild(makeCard(sourceLabel, make("div", "source-text", formatText(record.source_text))));
-    sourceGrid.appendChild(makeCard("官方简体中文", make("div", "source-text zh", formatText(record.official_zh_cn))));
+    sourceGrid.appendChild(makeCard("同句官方简体中文", make("div", "source-text zh", formatText(record.official_zh_cn))));
     detail.appendChild(sourceGrid);
-
-    const contextGrid = make("div", "context-grid");
-    const before = record.context_before ? `${record.context_before.source_text || ""}\n${record.context_before.official_zh_cn || ""}`.trim() : "（无相邻台词）";
-    const after = record.context_after ? `${record.context_after.source_text || ""}\n${record.context_after.official_zh_cn || ""}`.trim() : "（无相邻台词）";
-    contextGrid.appendChild(makeCard("上一条上下文", make("div", "context-text", before)));
-    contextGrid.appendChild(makeCard("下一条上下文", make("div", "context-text", after)));
-    detail.appendChild(contextGrid);
 
     const analysis = record.analysis;
     const analysisSection = make("section", "section");
@@ -301,3 +292,4 @@
 </script>
 </body>
 </html>
+      .source-grid { grid-template-columns: 1fr; }

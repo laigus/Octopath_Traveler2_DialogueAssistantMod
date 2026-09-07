@@ -284,16 +284,23 @@ local function compact(value)
 end
 
 local function unwrap(value)
-    if value == nil then
+    if type(value) ~= "userdata" then
+        return value
+    end
+    -- Only parameter wrappers expose get(); probing it on a UObject invokes
+    -- reflected property lookup, potentially through a destroyed object.
+    local typed, kind = pcall(function() return value:type() end)
+    if not typed then
         return nil
     end
-    local ok, result = pcall(function()
-        return value:get()
-    end)
+    if kind ~= "RemoteUnrealParam" and kind ~= "LocalUnrealParam" then
+        return value
+    end
+    local ok, result = pcall(function() return value:get() end)
     if ok then
         return result
     end
-    return value
+    return nil
 end
 
 local function remote_type(value)
@@ -653,7 +660,7 @@ local function is_valid_object(object)
     if ok then
         return valid == true
     end
-    return full_name(object) ~= ""
+    return false
 end
 
 local function balloon_from_talk_text(talk_text)
@@ -2659,6 +2666,7 @@ local function mark_option_menu_closed(context)
     if not is_valid_object(state.option_menu) or full_name(menu) == full_name(state.option_menu) then
         forget_closed_mod_tab()
         state.option_menu_open = false
+        state.option_menu = nil
     end
 end
 
@@ -2863,9 +2871,11 @@ local function handle_mod_cancel(context)
 end
 
 local function keep_mod_footer_text()
-    local menu = unwrap(state.option_menu)
-    if state.mod_tab_active
-        and is_valid_object(menu)
+    if not state.option_menu_open or not state.mod_tab_active then
+        return
+    end
+    local menu = state.option_menu
+    if is_valid_object(menu)
         and option_category_index(menu) == MOD_CATEGORY_ID then
         apply_mod_chrome(menu)
     end
@@ -3718,10 +3728,17 @@ local function replay_previous_line()
 end
 
 log("loaded version=" .. VERSION .. "; in-place native replay, official translation, and dialogue analysis")
-install_pending_hooks()
-
+local hooks_ready = install_pending_hooks()
+local hook_retry_queued = false
 LoopAsync(2000, function()
-    install_pending_hooks()
+    if hooks_ready then return true end
+    if not hook_retry_queued then
+        hook_retry_queued = true
+        ExecuteInGameThread(function()
+            hooks_ready = install_pending_hooks()
+            hook_retry_queued = false
+        end)
+    end
     return false
 end)
 

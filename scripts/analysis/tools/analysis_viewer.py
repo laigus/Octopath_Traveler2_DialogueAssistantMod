@@ -54,15 +54,6 @@ def record_key(record: dict[str, Any]) -> tuple[str, str]:
     return text_value(record.get("id")), text_value(record.get("source_hash"))
 
 
-def context_payload(context: Any, source_field: str) -> Optional[dict[str, str]]:
-    if not isinstance(context, dict):
-        return None
-    return {
-        "source_text": text_value(context.get(source_field)),
-        "official_zh_cn": text_value(context.get("official_zh_cn")),
-    }
-
-
 def dataset_language(dataset_dir: Path) -> str:
     manifest_path = dataset_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -126,8 +117,6 @@ def build_batch_payload(dataset_dir: Path, batch: str) -> dict[str, Any]:
                 "text_index": input_record.get("text_index"),
                 "source_text": text_value(input_record.get(source_field)),
                 "official_zh_cn": text_value(input_record.get("official_zh_cn")),
-                "context_before": context_payload(input_record.get("context_before"), source_field),
-                "context_after": context_payload(input_record.get("context_after"), source_field),
                 "analysis": analysis,
                 "issue": issue,
             }
