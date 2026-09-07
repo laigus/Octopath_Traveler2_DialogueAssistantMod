@@ -3728,15 +3728,15 @@ local function replay_previous_line()
 end
 
 log("loaded version=" .. VERSION .. "; in-place native replay, official translation, and dialogue analysis")
-local hooks_ready = install_pending_hooks()
-local hook_retry_queued = false
+state.hooks_ready = install_pending_hooks()
+state.hook_retry_queued = false
 LoopAsync(2000, function()
-    if hooks_ready then return true end
-    if not hook_retry_queued then
-        hook_retry_queued = true
+    if state.hooks_ready then return true end
+    if not state.hook_retry_queued then
+        state.hook_retry_queued = true
         ExecuteInGameThread(function()
-            hooks_ready = install_pending_hooks()
-            hook_retry_queued = false
+            state.hooks_ready = install_pending_hooks()
+            state.hook_retry_queued = false
         end)
     end
     return false
