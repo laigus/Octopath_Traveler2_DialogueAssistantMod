@@ -3003,11 +3003,15 @@ state.active_record = function()
     end
     record = state.party_chat
     if record ~= nil then
-        local owner = state.find_party_chat_ui()
-        if is_valid_object(owner) and full_name(owner) == record.overlay_owner_name then
+        local party_ui = state.find_party_chat_ui()
+        if is_valid_object(party_ui) and full_name(party_ui) == record.party_ui_name
+            and is_valid_object(record.talk_text) and is_valid_object(record.balloon)
+            and call_no_arg_raw(record.balloon, "IsVisible") == true
+            and state.widget_is_displayed(record.overlay_owner) then
             return record
         end
         state.clear_party_chat()
+        return nil
     end
     record = state.current
     if record ~= nil and record.kind == "ordinary_dialogue"
@@ -3693,13 +3697,21 @@ state.match_dialogue_text = function(texts, index, voice_names)
 end
 
 state.capture_party_chat = function(object)
-    local owner = state.find_party_chat_ui()
-    if not is_valid_object(owner) then
+    local party_ui = state.find_party_chat_ui()
+    if not is_valid_object(party_ui) then
         state.clear_party_chat()
         return false
     end
 
     state.clear_field_info()
+    -- PartyChat owns the background; its balloons are drawn in a separate foreground bundle.
+    local balloon = balloon_from_talk_text(object)
+    local owner = direct_outer(direct_outer(balloon))
+    if not is_valid_object(balloon) or not is_valid_object(owner) then
+        state.clear_party_chat()
+        report_shortcut_hint_error("party_chat_balloon_bundle_unavailable")
+        return true
+    end
     local texts = copy_array_values(read_raw_field(object, "DrawTexts"), "string")
     local index = (tonumber(scalar_string(read_raw_field(object, "TextIndex"))) or 0) + 1
     local record = {
@@ -3709,7 +3721,8 @@ state.capture_party_chat = function(object)
         voice_name_values = copy_array_values(read_raw_field(object, "VoiceLabel"), "name"),
         object_name = full_name(object),
         talk_text = object,
-        balloon = balloon_from_talk_text(object),
+        balloon = balloon,
+        party_ui_name = full_name(party_ui),
         overlay_owner = owner,
         overlay_owner_name = full_name(owner),
     }
@@ -3717,8 +3730,8 @@ state.capture_party_chat = function(object)
     ensure_shortcut_hint(nil, owner, shortcut_hint_specs(false))
     refresh_translation_overlay(record)
     refresh_analysis_overlay(record)
-    log(string.format("party_chat_ready label=%s index=%d owner=%s",
-        record.lookup_label or "", index - 1, record.overlay_owner_name))
+    log(string.format("party_chat_ready label=%s index=%d owner=%s party_ui=%s",
+        record.lookup_label or "", index - 1, record.overlay_owner_name, record.party_ui_name))
     return true
 end
 
@@ -3820,9 +3833,13 @@ local hook_specs = {
         callback = function(context)
             local object = unwrap(context)
             local record = state.party_chat
-            if record ~= nil and is_valid_object(object) and is_valid_object(record.balloon)
-                and full_name(object) == full_name(record.balloon) then
-                state.clear_party_chat()
+            if record ~= nil then
+                if is_valid_object(object) and is_valid_object(record.balloon)
+                    and full_name(object) == full_name(record.balloon) then
+                    state.clear_party_chat()
+                end
+                -- Ordinary dialogue history may share this bundle but does not own the active panels.
+                return
             end
             record = state.current
             if record ~= nil and record.kind == "ordinary_dialogue"

@@ -303,7 +303,7 @@ LineRecord
 
 运行输入由 UE4SS 注册为可配置的无修饰字母键，默认 `R` 重播本句、`G` 回到上一句、`T` 显示或隐藏官方翻译、`V` 显示或隐藏解析。四个快捷键共享同一配置与冲突交换逻辑；解析与翻译共用开关，不依赖所选翻译语言。分析语言拥有独立设置，目前只有日语对应运行时数据，其他选项不会注册为可用的解析动作。未绑定 RichEvent 的普通对话、队友旅途对话和“打听/调查”资料页只接入 `T` 和 `V`，不会对这些界面执行剧情重播。
 
-台词绑定 RichEvent 后，Mod 取得活动 `UIEventSkip_C` 的 WidgetTree，把已开启功能对应的 `MenuGuideItem_C` 直接加入其根 `CanvasPanel` 或 `Overlay`，按各自右边界锚定到画面右上角，并根据标签实际宽度分别设置偏移，使相邻说明文字与下一枚键帽之间保持一致的视觉间距。普通对话的两项提示使用 `BalloonBundleWidgetBP_C` 的根 `Overlay`。`GuideText_00` 使用 `FONT_KS_NewCinema_PC`，`ButtonText` 使用 `FONT_KS_Meldir_PC`。字母经 `KeyConfigButton1WBP_C.UpdateText` 和 `LibText.ConvFontImageText` 转换为本作键帽字形，再写入 `ButtonText`。提示继承所属对话界面的原生可见性，不跟随气泡位置。
+台词绑定 RichEvent 后，Mod 取得活动 `UIEventSkip_C` 的 WidgetTree，把已开启功能对应的 `MenuGuideItem_C` 直接加入其根 `CanvasPanel` 或 `Overlay`，按各自右边界锚定到画面右上角，并根据标签实际宽度分别设置偏移，使相邻说明文字与下一枚键帽之间保持一致的视觉间距。普通对话和 Party Chat 的两项提示使用各自当前气泡所属 `BalloonBundleWidgetBP_C` 的根 `Overlay`。`GuideText_00` 使用 `FONT_KS_NewCinema_PC`，`ButtonText` 使用 `FONT_KS_Meldir_PC`。字母经 `KeyConfigButton1WBP_C.UpdateText` 和 `LibText.ConvFontImageText` 转换为本作键帽字形，再写入 `ButtonText`。提示继承所属对话界面的原生可见性，不跟随气泡位置。
 
 ## 官方翻译显示
 
@@ -323,7 +323,9 @@ LineRecord
 
 `TalkText_C:PlayVoice` 到达句子边界时，若 `EventManagerBP_C.PartyChatWidget` 处于可见且挂载到视口的控件层级，运行时以当前 `DrawTexts`、`VoiceLabel` 副本和 `TextIndex` 建立独立的 `party_chat` 记录，沿用上述惰性编号查询。识别不依赖台词前缀，也不注册原生文本查询挂钩。
 
-该记录优先于剧情历史响应翻译和解析，两个面板及快捷键提示均挂入活动 `PartyChat_C` 的根 `CanvasPanel`。下一句刷新当前记录与已打开面板；当前气泡的 `OnCloseAnimationFinished` 清理本句控件，其他气泡的关闭不会清除当前句。离开旅途对话后，视口与可见性检查丢弃失效记录。Party Chat 不写入 RichEvent 重播历史，也不采集或跳转 Sequence。
+该记录优先于剧情历史响应翻译和解析，包括从旅途记录进入的回放。`party_ui_name` 只标识当前 `PartyChat_C` 会话；显示所有者单独沿当前 `TalkText → WidgetTree → Balloon → WidgetTree → BalloonBundleWidgetBP` 取得。两个面板及快捷键提示加入实际承载气泡的全屏根 `Overlay`，不挂入角色背景 `PartyChat_C.CanvasPanel_0`，也不调整背景层或游戏 UI 的可见性。
+
+下一句刷新当前记录与已打开面板；当前气泡的 `OnCloseAnimationFinished` 清理本句控件。Party Chat 活动期间，关闭回调只处理该记录，避免同一容器中的旧普通对话历史清理当前面板。按键入口同时检查会话标识、台词与气泡对象、气泡可见性以及显示所有者是否挂载到可见视口；检查失败时清理并返回空记录，不在同一次按键中回落到旧剧情。Party Chat 不写入 RichEvent 重播历史，也不采集或跳转 Sequence。
 
 翻译与解析分别复用已有 `official_*.tsv` 和 `analysis_ja.tsv`，不增加独立的 Party Chat 数据文件；只修改这条接入流程时不需要重新生成 TSV、PAK 或图形安装器。
 
@@ -331,7 +333,7 @@ LineRecord
 
 发布前的数据构建从已确认游戏 build 的主 PAK 读取九种 `TalkData_*`、九种 `GameText*` 和 `NPCHearData`，分别生成 UTF-8 只读的对话台词与人物资料查询文件。对话记录以语音标签或完整文本唯一匹配出的编号及原始文本槽位查询；`SearchDetailPartsWidget_C:SetupSearchDetail` 完成后，运行时读取资料页的 `HistoryText`，规范化可见日文并在日文人物资料表中反查 `HistoryTextID`，随后以同一键读取所选语言的官方资料。首次成功取得资料时，游戏传入的 `IsAlreadyCompleted` 为 `false`；该参数影响已取得情报的说明，不作为正文捕获的开关。资料文本规范化分别移除完整的全角空格和 ASCII 空白，不在 Lua 字节字符类中混入 UTF-8 字符；对话文本精确匹配不使用此规范化。数据均来自游戏官方文本表，不经过模型或翻译服务。
 
-翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前内容所有者：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话使用 `BalloonBundleWidgetBP_C`，队友旅途对话使用 `PartyChat_C`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景并按完整文本扩展；剧情推进、重播、回到历史句或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。离开“打听/调查”界面时，关闭回调会先解除资料页控件和对象引用。
+翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前内容所有者：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话和队友旅途对话使用当前气泡所属的 `BalloonBundleWidgetBP_C`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景并按完整文本扩展；剧情推进、重播、回到历史句或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。离开“打听/调查”界面时，关闭回调会先解除资料页控件和对象引用。
 
 ## 日语解析显示
 

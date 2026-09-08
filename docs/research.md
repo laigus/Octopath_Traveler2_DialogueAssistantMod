@@ -92,6 +92,8 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 
 - `/Game/UserInterface/PartyChat/Database/PartyChat` 有 195 条资料，包含 `EventLabel`、`RequiredCharacter` 等字段。显示界面是 `/Game/UserInterface/PartyChat/BP/PartyChat.PartyChat_C`，继承原生 `PartyChatBase`，根控件为 `CanvasPanel_0`；运行时引用保存在 `EventManager.PartyChatWidget`。
 - `EventManagerBP_C:StartTalkPChat` 从 `PartyChatWidget.GetCharacterPos` 取得说话人位置，将事件的 `Text`、`Dir` 和 `OptAry` 交给 `SetTalkData`，通过 `BalloonBundle.AddBalloon` 创建气泡，并调用 `FocusPartyChatCharactr` 更新角色焦点。Mod 不挂钩这个带布尔返回值的流程入口。
+- 旅途记录列表为 `/Game/UserInterface/MainMenu/Record/BP/WBP_MainMenuStoryRecordPartyChat`；`EventManagerBP_C:StartPChatMode` 包含 `IsTheaterMode` 与 `PartyChatFinish` 的回放分支。角色背景 `PartyChat_C` 与 `GetBalloonBundle` 返回的气泡容器分属不同界面；翻译、解析与提示使用后者的全屏 `Overlay`，会话识别仍使用 `EventManager.PartyChatWidget`。
+- `PartyChat_C:VisibleBackGround` 同时设置自身与 `CanvasPanel_0` 的可见性，并调用 `HideWidgetTemporary`；Mod 不改写此流程。背景层或面板创建成功的日志不代表新增控件已在前景气泡层显示。
 - `SetTalkData` 将事件中的文本编号传给原生 `/Script/Majesty.KSTextStatics:GetTalkText(Label, OutText)`，输出为 `TalkText` 结构；其中 `Text` 字符串数组进入气泡和 `TalkText_C.DrawTexts`。语音另经 `GetTalkVoice` 查询，因此文本编号与 `VoiceLabel` 独立。
 - `TalkText_C:SetText` 保存文本、语音数组并把 `TextIndex` 置零，`StartAnimation` 调用 `PlayVoice`。文本显示使用的原生气泡提供无返回值的 `Balloon_00_C:OnCloseAnimationFinished` 回调。
 - 当前查询文件中 `TX_PTC_*` 与 `TX_PCJ_*` 共 3058 个文本槽位，均有对应日语解析记录；运行时以语音标签或完整文本数组的唯一匹配编号及原始文本槽位查询，不以这两个前缀限制匹配。不同编号可能有完全相同的原文；没有语音标签消歧时跳过该句结果。
