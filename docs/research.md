@@ -96,10 +96,11 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 - `PartyChat_C:VisibleBackGround` 同时设置自身与 `CanvasPanel_0` 的可见性，并调用 `HideWidgetTemporary`；Mod 不改写此流程。背景层或面板创建成功的日志不代表新增控件已在前景气泡层显示。
 - `SetTalkData` 将事件中的文本编号传给原生 `/Script/Majesty.KSTextStatics:GetTalkText(Label, OutText)`，输出为 `TalkText` 结构；其中 `Text` 字符串数组进入气泡和 `TalkText_C.DrawTexts`。语音另经 `GetTalkVoice` 查询，因此文本编号与 `VoiceLabel` 独立。
 - `TalkText_C:SetText` 保存文本、语音数组并把 `TextIndex` 置零，`StartAnimation` 调用 `PlayVoice`。文本显示使用的原生气泡提供无返回值的 `Balloon_00_C:OnCloseAnimationFinished` 回调。
-- 当前查询文件中 `TX_PTC_*` 与 `TX_PCJ_*` 共 3058 个文本槽位，均有对应日语解析记录；运行时以语音标签或完整文本数组的唯一匹配编号及原始文本槽位查询，不以这两个前缀限制匹配。不同编号可能有完全相同的原文；没有语音标签消歧时跳过该句结果。
+- 当前查询文件中 `TX_PTC_*` 与 `TX_PCJ_*` 共 3058 个文本槽位，均有对应日语解析记录；运行时以语音标签或完整文本数组匹配出的编号及原始文本槽位查询，不以这两个前缀限制匹配。不同编号可能有完全相同的原文；没有语音标签消歧时，分别核对所有候选的译文和解析，显示一致结果或内容冲突提示。
 
 ## 普通 NPC 对话
 
+- `TXT_NPC_KUS_2B_01_Twn_Snw_2_1_A_0300_001` 与 `TXT_KUS_2B_Twn_Snw_2_1_A_0300_D000_001` 的第零槽位均为截图中的“キャスティ先生のこと／さっそく領主様に知らせましたよ”。两者九种官方语言文本与日语解析逐字一致；重复编号不代表存在不同的待显示内容。
 - 已有运行日志记录了 `TalkText_Balloon_C` 的普通 NPC 台词，`VoiceLabel` 是空数组，但 `DrawTexts` 和 `OriginText` 已包含完整日文；单独依赖语音标签不足以识别这类台词。
 - 日志中的学者公会相关两句台词分别对应 `TX_SS_TSn21_0100_0050 + 0` 和 `TX_SS_TSn21_0100_0055 + 0`，当前官方文本与日语解析表均有对应记录。普通 NPC 台词不限定为 `TXT_NPC_*` 或 `TX_NP_*` 前缀。
 - 该活动对象的外层链是 `TalkText_Balloon → WidgetTree → Balloon_03 → WidgetTree → BalloonBundleWidgetBP_C`。`/Game/UserInterface/Balloon/BP/BalloonBundleWidgetBP` 的根控件为 `Overlay_1`，类型是原生 `Overlay`，可承载固定屏幕位置的帮助窗和快捷键提示。

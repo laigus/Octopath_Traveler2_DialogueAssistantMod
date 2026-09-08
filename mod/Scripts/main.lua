@@ -33,54 +33,63 @@ local ALLOWED_SHORTCUT_KEYS = {
 local TRANSLATION_LANGUAGES = {
     {
         code = "JA",
+        ambiguous_text = "同じ原文に異なる訳文があるため、表示する訳文を特定できません。",
         enum = "EKSLanguage::eJA",
         data_file = "official_ja.tsv",
         font = "FONT_KS_NewCinema_PC",
     },
     {
         code = "EN",
+        ambiguous_text = "This line matches multiple different translations; the correct entry is not yet identified.",
         enum = "EKSLanguage::eEN",
         data_file = "official_en.tsv",
         font = "FONT_KS_Skech_PC",
     },
     {
         code = "IT",
+        ambiguous_text = "Questa battuta corrisponde a traduzioni diverse; la voce corretta non è ancora identificata.",
         enum = "EKSLanguage::eIT",
         data_file = "official_it.tsv",
         font = "FONT_KS_Skech_PC",
     },
     {
         code = "FR",
+        ambiguous_text = "Cette réplique correspond à plusieurs traductions différentes ; la bonne entrée reste à identifier.",
         enum = "EKSLanguage::eFR",
         data_file = "official_fr.tsv",
         font = "FONT_KS_Skech_PC",
     },
     {
         code = "DE",
+        ambiguous_text = "Dieser Text hat mehrere unterschiedliche Übersetzungen; der richtige Eintrag ist noch nicht bestimmt.",
         enum = "EKSLanguage::eDE",
         data_file = "official_de.tsv",
         font = "FONT_KS_Skech_PC",
     },
     {
         code = "ES",
+        ambiguous_text = "Esta frase coincide con varias traducciones diferentes; aún no se ha identificado la entrada correcta.",
         enum = "EKSLanguage::eES",
         data_file = "official_es.tsv",
         font = "FONT_KS_Skech_PC",
     },
     {
         code = "ZH_TW",
+        ambiguous_text = "這句原文對應多個不同譯文，暫未確定具體台詞。",
         enum = "EKSLanguage::eZH_TW",
         data_file = "official_zh_tw.tsv",
         font = "FONT_MJ_TW_FangSong_PC",
     },
     {
         code = "ZH_CN",
+        ambiguous_text = "这句原文对应多个不同译文，暂未确定具体台词。",
         enum = "EKSLanguage::eZH_CN",
         data_file = "official_zh_cn.tsv",
         font = "FONT_MJ_CN_WeiBei_PC",
     },
     {
         code = "KR",
+        ambiguous_text = "같은 원문에 서로 다른 번역이 있어 정확한 대사를 아직 식별하지 못했습니다.",
         enum = "EKSLanguage::eKR",
         data_file = "official_kr.tsv",
         font = "FONT_KR_YDHopeL_PC",
@@ -939,17 +948,38 @@ local function record_dialogue_identity(record)
         end
         return record.lookup_label, record.lookup_index or 1, nil
     end
-    if record.lookup_label == nil and record.lookup_error == nil then
+    if record.lookup_label == nil and record.lookup_candidates == nil and record.lookup_error == nil then
         record.lookup_index = record.lookup_index or (tonumber(record.text_index_number) or 0) + 1
-        record.lookup_label, record.lookup_error = state.match_dialogue_text(
+        record.lookup_label, record.lookup_error, record.lookup_candidates = state.match_dialogue_text(
             record.draw_text_values, record.lookup_index, record.voice_name_values
         )
     end
-    return record.lookup_label, record.lookup_index, record.lookup_error
+    return record.lookup_label, record.lookup_index, record.lookup_error, record.lookup_candidates
+end
+
+state.shared_dialogue_content = function(data, candidates, text_index, content_kind)
+    -- Resolve the displayed content, not an arbitrary dialogue ID. Every candidate must agree.
+    local reference = "shared:" .. candidates[1]
+    local shared_text = nil
+    for _, candidate in ipairs(candidates) do
+        local row = data[candidate]
+        if row == nil then
+            return nil, content_kind .. "_row_missing", reference
+        end
+        local text = row[text_index]
+        if text == nil or text == "" then
+            return nil, content_kind .. "_text_missing", reference
+        end
+        if shared_text ~= nil and shared_text ~= text then
+            return nil, "dialogue_content_ambiguous", reference
+        end
+        shared_text = text
+    end
+    return shared_text, nil, reference
 end
 
 local function translation_for_record(record)
-    local label, text_index, identity_error = record_dialogue_identity(record)
+    local label, text_index, identity_error, candidates = record_dialogue_identity(record)
     if identity_error ~= nil then
         return nil, identity_error, ""
     end
@@ -958,7 +988,10 @@ local function translation_for_record(record)
     local content_kind = record ~= nil and record.kind == "field_info" and "field_info" or "dialogue"
     local data = load_official_translation_data(language, content_kind)
     if data == nil then
-        return nil, state.translation_data_errors[language.code .. ":" .. content_kind], label
+        return nil, state.translation_data_errors[language.code .. ":" .. content_kind], label or ""
+    end
+    if candidates ~= nil then
+        return state.shared_dialogue_content(data, candidates, text_index, "official_translation")
     end
     local translated_row = data[label]
     if translated_row == nil then
@@ -973,7 +1006,7 @@ local function translation_for_record(record)
 end
 
 local function analysis_for_record(record)
-    local label, text_index, identity_error = record_dialogue_identity(record)
+    local label, text_index, identity_error, candidates = record_dialogue_identity(record)
     if identity_error ~= nil then
         return nil, identity_error, ""
     end
@@ -987,7 +1020,10 @@ local function analysis_for_record(record)
         if record ~= nil and record.kind == "field_info" then
             return nil, "analysis_row_missing", label
         end
-        return nil, state.analysis_data_error, label
+        return nil, state.analysis_data_error, label or ""
+    end
+    if candidates ~= nil then
+        return state.shared_dialogue_content(data, candidates, text_index, "analysis")
     end
     local row = data[label]
     if row == nil then
@@ -1637,9 +1673,13 @@ local function refresh_translation_overlay(record)
 
     local text, translation_error, label = translation_for_record(record)
     if text == nil then
-        detach_translation_widget()
         report_translation_ui_error(translation_error)
-        return false
+        if translation_error == "dialogue_content_ambiguous" then
+            text = current_translation_language().ambiguous_text
+        else
+            detach_translation_widget()
+            return false
+        end
     end
 
     local owner = nil
@@ -1820,7 +1860,10 @@ local function refresh_analysis_overlay(record)
 
     local text, analysis_error, label = analysis_for_record(record)
     if text == nil then
-        if analysis_error == "analysis_row_missing" or analysis_error == "analysis_text_missing" then
+        if analysis_error == "dialogue_content_ambiguous" then
+            text = "这句原文对应多个不同解析，暂未确定具体台词。"
+            report_analysis_ui_error(analysis_error)
+        elseif analysis_error == "analysis_row_missing" or analysis_error == "analysis_text_missing" then
             text = record ~= nil and record.kind == "field_info"
                 and "当前资料暂无解析。"
                 or "当前台词暂无解析。"
@@ -3677,23 +3720,35 @@ state.match_dialogue_text = function(texts, index, voice_names)
                         local previous = source_index[key]
                         if previous == nil then
                             source_index[key] = row_name
+                        elseif type(previous) == "table" then
+                            previous[row_name] = true
                         elseif previous ~= row_name then
-                            source_index[key] = false
+                            source_index[key] = { [previous] = true, [row_name] = true }
                         end
                     end
                 end
             end
         end
+        for key, matches in pairs(source_index) do
+            if type(matches) == "table" then
+                local candidates = {}
+                for row_name in pairs(matches) do
+                    candidates[#candidates + 1] = row_name
+                end
+                table.sort(candidates)
+                source_index[key] = candidates
+            end
+        end
         state.dialogue_source_index = source_index
     end
-    local label = state.dialogue_source_index[state.dialogue_text_key(texts)]
-    if label == false then
-        return nil, "dialogue_label_ambiguous"
+    local matches = state.dialogue_source_index[state.dialogue_text_key(texts)]
+    if type(matches) == "table" then
+        return nil, nil, matches
     end
-    if label == nil then
+    if matches == nil then
         return nil, "dialogue_label_unmatched"
     end
-    return label, nil
+    return matches, nil
 end
 
 state.capture_party_chat = function(object)
