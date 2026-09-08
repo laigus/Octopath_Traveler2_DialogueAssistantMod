@@ -17,18 +17,30 @@ $sourceSettings = Join-Path $sourceModRoot "runtime\UE4SS-settings.ini"
 $sourcePak = Join-Path $sourceModRoot "pak\$script:ModPakName"
 $ue4ssZip = Join-Path $sourceModRoot "runtime\UE4SS\$script:Ue4ssVersion\UE4SS_v$script:Ue4ssVersion.zip"
 $translationLanguages = @("JA", "EN", "IT", "FR", "DE", "ES", "ZH_TW", "ZH_CN", "KR")
-$sourceTranslations = @($translationLanguages | ForEach-Object {
-    $fileName = "official_$($_.ToLowerInvariant()).tsv"
-    [pscustomobject]@{
-        Language = $_
-        FileName = $fileName
-        Path = Join-Path $sourceModRoot "Scripts\$fileName"
+$sourceOfficialData = @($translationLanguages | ForEach-Object {
+    $language = $_
+    foreach ($fileName in @(
+        "official_$($language.ToLowerInvariant()).tsv",
+        "official_field_$($language.ToLowerInvariant()).tsv"
+    )) {
+        [pscustomobject]@{
+            Language = $language
+            FileName = $fileName
+            Path = Join-Path $sourceModRoot "Scripts\$fileName"
+        }
     }
 })
-$sourceLookups = @($sourceTranslations) + @([pscustomobject]@{
+$sourceLookups = @($sourceOfficialData) + @([pscustomobject]@{
     FileName = "analysis_ja.tsv"
     Path = $sourceAnalysis
 })
+$sourceFieldAnalysis = Join-Path $sourceModRoot "Scripts\analysis_field_ja.tsv"
+if (Test-Path -LiteralPath $sourceFieldAnalysis -PathType Leaf) {
+    $sourceLookups += [pscustomobject]@{
+        FileName = "analysis_field_ja.tsv"
+        Path = $sourceFieldAnalysis
+    }
+}
 
 foreach ($requiredSource in @($sourceLua, $sourceConfig, $sourceSettings, $sourcePak) + @($sourceLookups.Path)) {
     if (-not (Test-Path -LiteralPath $requiredSource -PathType Leaf)) {

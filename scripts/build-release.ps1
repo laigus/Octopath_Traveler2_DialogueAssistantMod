@@ -34,7 +34,9 @@ $requiredFiles.Add((Join-Path $projectRoot "mod\runtime\UE4SS-settings.ini"))
 $requiredFiles.Add((Join-Path $projectRoot "mod\runtime\UE4SS\$script:Ue4ssVersion\UE4SS_v$($script:Ue4ssVersion).zip"))
 foreach ($language in $officialLanguages) {
     $requiredFiles.Add((Join-Path $projectRoot "mod\Scripts\official_$language.tsv"))
+    $requiredFiles.Add((Join-Path $projectRoot "mod\Scripts\official_field_$language.tsv"))
 }
+$fieldAnalysisPath = Join-Path $projectRoot "mod\Scripts\analysis_field_ja.tsv"
 
 $assetsRoot = Join-Path $projectRoot "assets"
 $assetFiles = @()
@@ -124,6 +126,10 @@ try {
     Copy-ReleaseFile "mod\Scripts\analysis_ja.tsv" "mod\Scripts\analysis_ja.tsv"
     foreach ($language in $officialLanguages) {
         Copy-ReleaseFile "mod\Scripts\official_$language.tsv" "mod\Scripts\official_$language.tsv"
+        Copy-ReleaseFile "mod\Scripts\official_field_$language.tsv" "mod\Scripts\official_field_$language.tsv"
+    }
+    if (Test-Path -LiteralPath $fieldAnalysisPath -PathType Leaf) {
+        Copy-ReleaseFile "mod\Scripts\analysis_field_ja.tsv" "mod\Scripts\analysis_field_ja.tsv"
     }
     Copy-ReleaseFile "mod\pak\$script:ModPakName" "mod\pak\$script:ModPakName"
     Copy-ReleaseFile "mod\runtime\UE4SS-settings.ini" "mod\runtime\UE4SS-settings.ini"

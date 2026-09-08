@@ -32,7 +32,9 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 - `UpdateTalk(DeltaTime)` 每帧调用原生气泡系统并返回布尔结果；该结果参与对话完成判断。
 - `UpdateTalk` 还检查活动 UI 栈，并在活动对象不是当前 `BalloonBundle` 时重新压入对话对象。
 
-运行时不在 `StartTalk` 或 `UpdateTalk` 上注册 Lua hook。台词观察使用 `TalkText_C:PlayVoice`，原生对话结束信号和玩家控制恢复路径不经过 Mod 回调。
+运行时不在 `StartTalk` 或 `UpdateTalk` 上注册 Lua hook。台词观察使用 `TalkText_C:PlayVoice`，气泡关闭动画结束的无返回值回调只清理 Mod 控件；原生对话完成判定和玩家控制恢复路径不由 Mod 改写。
+
+固定版本 UE4SS 3.0.1 存在原生 Blueprint 函数库挂钩缺陷，上游 [issue #467](https://github.com/UE4SS-RE/RE-UE4SS/issues/467) 记录了 UE4.27 下的 `UFunction::FuncPtr hook` / `no function map entry` 异常。本机同一异常后出现 `FMallocBinned2` 未识别内存块断言。因此运行时只注册 `/Game/` Blueprint 回调，不挂钩 `KSTextStatics:GetTalkText` 等原生函数库函数。
 
 ## `Balloon_00_C`
 
@@ -75,6 +77,30 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 - `Refresh Title Icon` 与 `GetCategoryDescriptionText` 只定义索引 `0..5`；Mod 分类活动期间折叠缺失的标题贴图，并通过 `MenuFooter.SetHelpText` 持续提供当前选项的说明。
 - 分类确认与内容确认都会经过 `OnDecideOption`：Mod 分类第一次收到该回调时只从分类导航进入内容区，后续回调才确认当前设置项。内容区上下移动走 `MoveCursor`，左右输入走 `SendLRToExWidget`，返回走 `OnCancel`；这些回调只在内容区聚焦期间处理八行。Mod 分类使用 `ListItemWidget_Opt1_C` 选项行、独立的 `GuideText_00` 行标题、收束为单一状态的 `ToggleButtonWBP_C`、`KeyConfigButton1WBP_C`、两个 `LanguageButtonWBP_C` 和状态表完成交互，不修改 `OptionItemList`。按键项从 `KeyConfigButton1WBP_C` 中取出已转换的 `Text` 键帽控件，使用一致的 Fill、右对齐、垂直居中槽位；两个原生语言控件分别建立九项本地化名称，`SetIndex`、`InputLeft` 与 `InputRight` 管理各自的选择显示。
 - 运行时 UI 只创建 Blueprint UserWidget，不构造原生 `Border`、`VerticalBox` 或 `HorizontalBox`。
+
+## 打听与调查资料界面
+
+- 药师的“打听”界面由 `FieldCommandWidgetHear_C` 管理，学者的“调查”界面由 `FieldCommandWidgetSearch_C` 管理；两者都使用名为 `SearchDetail` 的 `SearchDetailPartsWidget_C` 子控件显示人物资料。
+- `SearchDetailPartsWidget_C:SetupSearchDetail(NPCLabel, IsAlreadyCompleted)` 根据 `NPCLabel` 读取 `NPCHearData`，取得其中的 `HistoryTextID`，再通过游戏文本接口把资料写入 `HistoryText`。`ChangeLanguageProc` 使用同一条读取链路刷新资料文本。
+- `FieldCommandWidgetHear_C` 与 `FieldCommandWidgetSearch_C` 的 `OpenInfoDialog` 均调用 `SetupSearchDetail(NPCLabel, false)`。`SetupSearchDetail` 无条件填充人物正文，`IsAlreadyCompleted` 仅参与情报物品说明的分支；首次取得资料也应捕获正文。
+- UE4SS 3.0.1 的 [RegisterHook](https://docs.ue4ss.com/release/lua-api/global-functions/registerhook.html) 对 `/Game/` Blueprint 函数使用第二参数作为执行后回调，忽略第三参数。`SetupSearchDetail` 使用该形式；两种父界面的 `Close(IsNotCloseWidget)` 也是 Blueprint 函数，将状态置为关闭流程，关闭回调负责清理 Mod 资料引用与控件。
+- `NPCHearData` 位于 `/Game/Character/Database/NPCHearData`，共 1859 行；人物资料键保存在 `HistoryTextID` 字段。九种官方文本位于 `/Game/GameText/Database/GameTextJA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 和 `KR`，同一 `HistoryTextID` 可用于查询对应语言文本。
+- 图中人物资料对应 `NPCHearData` 行 `FC_INFO_NPC_Twn_Snw_2_1_A_TALK_0700`，其 `HistoryTextID` 为 `PRF_NP_Twn_Snw_2_1_A_TALK_0700`；日文与官方简体中文均能通过该键准确匹配。
+- `SearchDetailPartsWidget_C` 的根控件是 `Overlay`，可沿用现有原生帮助窗创建、字体切换和定位逻辑承载翻译与解析面板。
+
+## 队友旅途对话（Party Chat）
+
+- `/Game/UserInterface/PartyChat/Database/PartyChat` 有 195 条资料，包含 `EventLabel`、`RequiredCharacter` 等字段。显示界面是 `/Game/UserInterface/PartyChat/BP/PartyChat.PartyChat_C`，继承原生 `PartyChatBase`，根控件为 `CanvasPanel_0`；运行时引用保存在 `EventManager.PartyChatWidget`。
+- `EventManagerBP_C:StartTalkPChat` 从 `PartyChatWidget.GetCharacterPos` 取得说话人位置，将事件的 `Text`、`Dir` 和 `OptAry` 交给 `SetTalkData`，通过 `BalloonBundle.AddBalloon` 创建气泡，并调用 `FocusPartyChatCharactr` 更新角色焦点。Mod 不挂钩这个带布尔返回值的流程入口。
+- `SetTalkData` 将事件中的文本编号传给原生 `/Script/Majesty.KSTextStatics:GetTalkText(Label, OutText)`，输出为 `TalkText` 结构；其中 `Text` 字符串数组进入气泡和 `TalkText_C.DrawTexts`。语音另经 `GetTalkVoice` 查询，因此文本编号与 `VoiceLabel` 独立。
+- `TalkText_C:SetText` 保存文本、语音数组并把 `TextIndex` 置零，`StartAnimation` 调用 `PlayVoice`。文本显示使用的原生气泡提供无返回值的 `Balloon_00_C:OnCloseAnimationFinished` 回调。
+- 当前查询文件中 `TX_PTC_*` 与 `TX_PCJ_*` 共 3058 个文本槽位，均有对应日语解析记录；运行时以语音标签或完整文本数组的唯一匹配编号及原始文本槽位查询，不以这两个前缀限制匹配。不同编号可能有完全相同的原文；没有语音标签消歧时跳过该句结果。
+
+## 普通 NPC 对话
+
+- 已有运行日志记录了 `TalkText_Balloon_C` 的普通 NPC 台词，`VoiceLabel` 是空数组，但 `DrawTexts` 和 `OriginText` 已包含完整日文；单独依赖语音标签不足以识别这类台词。
+- 日志中的学者公会相关两句台词分别对应 `TX_SS_TSn21_0100_0050 + 0` 和 `TX_SS_TSn21_0100_0055 + 0`，当前官方文本与日语解析表均有对应记录。普通 NPC 台词不限定为 `TXT_NPC_*` 或 `TX_NP_*` 前缀。
+- 该活动对象的外层链是 `TalkText_Balloon → WidgetTree → Balloon_03 → WidgetTree → BalloonBundleWidgetBP_C`。`/Game/UserInterface/Balloon/BP/BalloonBundleWidgetBP` 的根控件为 `Overlay_1`，类型是原生 `Overlay`，可承载固定屏幕位置的帮助窗和快捷键提示。
 
 ## 运行边界
 

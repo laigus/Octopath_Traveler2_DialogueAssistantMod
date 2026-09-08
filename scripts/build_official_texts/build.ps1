@@ -39,53 +39,102 @@ $python = Get-Command $PythonPath -ErrorAction Stop | Select-Object -First 1
 
 $tempParent = [IO.Path]::GetFullPath((Join-Path $projectRoot "temp\official-texts"))
 $tempRoot = Assert-UnderDirectory (Join-Path $tempParent ([guid]::NewGuid().ToString("N"))) $tempParent
-New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
 try {
-    $unpackArguments = @("unpack", "-q", "-f", "-o", $tempRoot)
+    $npcHearRelative = "Octopath_Traveler2/Content/Character/Database/NPCHearData"
+    $unpackArguments = @(
+        "unpack", "-q", "-o", $tempRoot,
+        "-i", "$npcHearRelative.uasset",
+        "-i", "$npcHearRelative.uexp"
+    )
     foreach ($language in $languages) {
-        $assetRelative = "Octopath_Traveler2/Content/Talk/Database/TalkData_$language"
-        $unpackArguments += @("-i", "$assetRelative.uasset", "-i", "$assetRelative.uexp")
+        $talkRelative = "Octopath_Traveler2/Content/Talk/Database/TalkData_$language"
+        $gameTextRelative = "Octopath_Traveler2/Content/GameText/Database/GameText$language"
+        $unpackArguments += @(
+            "-i", "$talkRelative.uasset",
+            "-i", "$talkRelative.uexp",
+            "-i", "$gameTextRelative.uasset",
+            "-i", "$gameTextRelative.uexp"
+        )
     }
     $unpackArguments += $layout.Pak
     & $RepakPath @unpackArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to extract the official dialogue tables from the game PAK."
+        throw "Failed to extract the official text tables from the game PAK."
+    }
+
+    $npcHearRoot = Join-Path $tempRoot ($npcHearRelative -replace "/", "\")
+    $npcHearUasset = "$npcHearRoot.uasset"
+    $npcHearUexp = "$npcHearRoot.uexp"
+    $npcHearJson = "$npcHearRoot.json"
+    if (-not (Test-Path -LiteralPath $npcHearUasset -PathType Leaf) -or -not (Test-Path -LiteralPath $npcHearUexp -PathType Leaf)) {
+        throw "NPCHearData was not extracted from the supported game build."
+    }
+    $decode = Start-Process -FilePath $UAssetGuiPath -ArgumentList @(
+        "tojson", "`"$npcHearUasset`"", "`"$npcHearJson`"", "VER_UE4_27"
+    ) -Wait -PassThru -WindowStyle Hidden
+    if ($decode.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $npcHearJson -PathType Leaf)) {
+        throw "Failed to decode NPCHearData."
     }
 
     $outputs = [Collections.Generic.List[string]]::new()
     foreach ($language in $languages) {
-        $assetRelative = "Octopath_Traveler2/Content/Talk/Database/TalkData_$language"
-        $assetRoot = Join-Path $tempRoot ($assetRelative -replace "/", "\")
-        $uasset = "$assetRoot.uasset"
-        $uexp = "$assetRoot.uexp"
-        $json = "$assetRoot.json"
-        if (-not (Test-Path -LiteralPath $uasset -PathType Leaf) -or -not (Test-Path -LiteralPath $uexp -PathType Leaf)) {
+        $talkRelative = "Octopath_Traveler2/Content/Talk/Database/TalkData_$language"
+        $gameTextRelative = "Octopath_Traveler2/Content/GameText/Database/GameText$language"
+        $talkRoot = Join-Path $tempRoot ($talkRelative -replace "/", "\")
+        $gameTextRoot = Join-Path $tempRoot ($gameTextRelative -replace "/", "\")
+        $talkUasset = "$talkRoot.uasset"
+        $talkUexp = "$talkRoot.uexp"
+        $talkJson = "$talkRoot.json"
+        $gameTextUasset = "$gameTextRoot.uasset"
+        $gameTextUexp = "$gameTextRoot.uexp"
+        $gameTextJson = "$gameTextRoot.json"
+        if (-not (Test-Path -LiteralPath $talkUasset -PathType Leaf) -or -not (Test-Path -LiteralPath $talkUexp -PathType Leaf)) {
             throw "TalkData_$language was not extracted from the supported game build."
         }
+        if (-not (Test-Path -LiteralPath $gameTextUasset -PathType Leaf) -or -not (Test-Path -LiteralPath $gameTextUexp -PathType Leaf)) {
+            throw "GameText$language was not extracted from the supported game build."
+        }
 
-        & $UAssetGuiPath tojson $uasset $json VER_UE4_27 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $decode = Start-Process -FilePath $UAssetGuiPath -ArgumentList @(
+            "tojson", "`"$talkUasset`"", "`"$talkJson`"", "VER_UE4_27"
+        ) -Wait -PassThru -WindowStyle Hidden
+        if ($decode.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $talkJson -PathType Leaf)) {
             throw "Failed to decode TalkData_$language."
         }
-        $jsonDeadline = (Get-Date).AddSeconds(60)
-        while (-not (Test-Path -LiteralPath $json -PathType Leaf) -and (Get-Date) -lt $jsonDeadline) {
-            Start-Sleep -Milliseconds 250
-        }
-        if (-not (Test-Path -LiteralPath $json -PathType Leaf)) {
-            throw "Timed out while decoding TalkData_$language."
+        $decode = Start-Process -FilePath $UAssetGuiPath -ArgumentList @(
+            "tojson", "`"$gameTextUasset`"", "`"$gameTextJson`"", "VER_UE4_27"
+        ) -Wait -PassThru -WindowStyle Hidden
+        if ($decode.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $gameTextJson -PathType Leaf)) {
+            throw "Failed to decode GameText$language."
         }
 
-        $fileName = "official_$($language.ToLowerInvariant()).tsv"
-        $output = Join-Path $tempRoot $fileName
-        & $python.Source $builder --input $json --output $output --language $language
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output -PathType Leaf)) {
-            throw "Failed to build $fileName."
+        $dialogueFileName = "official_$($language.ToLowerInvariant()).tsv"
+        $fieldFileName = "official_field_$($language.ToLowerInvariant()).tsv"
+        $dialogueOutput = Join-Path $tempRoot $dialogueFileName
+        $fieldOutput = Join-Path $tempRoot $fieldFileName
+        & $python.Source $builder `
+            --talk-input $talkJson `
+            --game-text-input $gameTextJson `
+            --npc-hear-input $npcHearJson `
+            --dialogue-output $dialogueOutput `
+            --field-output $fieldOutput `
+            --language $language
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dialogueOutput -PathType Leaf)) {
+            throw "Failed to build $dialogueFileName."
         }
-        if ((Get-Item -LiteralPath $output).Length -lt 1MB) {
-            throw "$fileName is incomplete."
+        if (-not (Test-Path -LiteralPath $fieldOutput -PathType Leaf)) {
+            throw "Failed to build $fieldFileName."
         }
-        $outputs.Add($output)
+        if ((Get-Item -LiteralPath $dialogueOutput).Length -lt 1MB) {
+            throw "$dialogueFileName is incomplete."
+        }
+        if ((Get-Item -LiteralPath $fieldOutput).Length -lt 10KB) {
+            throw "$fieldFileName is incomplete."
+        }
+        $outputs.Add($dialogueOutput)
+        $outputs.Add($fieldOutput)
     }
 
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
@@ -96,9 +145,9 @@ try {
     }
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {
-        Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        Remove-Item -LiteralPath $tempRoot -Recurse
     }
     if ((Test-Path -LiteralPath $tempParent -PathType Container) -and -not (Get-ChildItem -LiteralPath $tempParent -Force | Select-Object -First 1)) {
-        Remove-Item -LiteralPath $tempParent -Force
+        Remove-Item -LiteralPath $tempParent
     }
 }

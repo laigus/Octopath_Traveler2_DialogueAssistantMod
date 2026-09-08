@@ -4,6 +4,7 @@
 
 - 只有 `RemoteUnrealParam` / `LocalUnrealParam` 调用 `get()`；UObject 直接进行有效性检查，检查失败即停止访问，不再读取名称作为后备判断。
 - 设置窗口关闭后释放缓存；全局页脚回调只在 Mod 设置页打开时访问窗口。未完成的 Hook 注册在游戏线程重试，全部完成后停止轮询。
+- 所有挂钩均为 `/Game/` Blueprint 函数，使用 `RegisterHook(path, callback)` 的第二参数接收执行后的回调。固定版本 UE4SS 3.0.1 不挂钩原生 Blueprint 函数库；台词只从已填充的 `TalkText_C` 对象读取，不拦截原生结构体输出。
 
 ## 边界
 
@@ -37,9 +38,10 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 | `assets/` | README 使用的图片 | 纳入 | 包含 |
 | `mod/Scripts/main.lua`、`config.lua` | 手工维护 | 纳入 | 包含 |
 | `scripts/build_pak/source/` | 经 UAssetGUI 编辑的四个 PAK 源资产 | 纳入 | 不直接包含 |
-| `mod/Scripts/official_*.tsv` | 从受支持游戏 build 生成 | 忽略 | 包含 |
+| `mod/Scripts/official_*.tsv`、`official_field_*.tsv` | 从受支持游戏 build 生成 | 忽略 | 包含 |
 | `scripts/analysis/{ja,en}/` 的 input、results、manifest | 从官方文本与 Agent 结果生成 | 忽略 | 不包含 |
 | `mod/Scripts/analysis_ja.tsv` | 从完整 Agent 结果生成 | 忽略 | 包含 |
+| `mod/Scripts/analysis_field_ja.tsv` | 人物资料解析的可选运行时接口 | 忽略 | 存在时包含 |
 | `mod/pak/OctopathDialogueAssistant_P.pak` | 从 `scripts/build_pak/source/` 生成 | 忽略 | 包含 |
 | `mod/runtime/UE4SS/` | 从固定上游版本下载并校验 | 忽略 | 包含 |
 | `OctopathDialogueAssistantInstaller.exe` | 从 `scripts/installer/Program.cs` 编译 | 忽略 | 包含 |
@@ -66,10 +68,10 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 
 ### 2. 选择修改层
 
-- 剧情捕获、历史记录、重播、官方翻译、解析面板、快捷键和设置页交互修改 `mod/Scripts/main.lua`。
+- 剧情与普通对话捕获、队友旅途对话捕获、人物资料捕获、历史记录、重播、官方翻译、解析面板、快捷键和设置页交互修改 `mod/Scripts/main.lua`。
 - 默认开关、按键和语言修改 `mod/Scripts/config.lua`；安装更新会保留游戏目录中已有的用户配置。
 - 只有设置页分类注册或复合字体映射变化时才更新 `scripts/build_pak/source/` 中的源资产并重新生成 PAK。
-- 游戏官方文本表或受支持 build 变化时才重新生成九种 `official_*.tsv`。
+- 游戏官方文本表、人物资料表或受支持 build 变化时，重新生成九种语言的 `official_*.tsv` 与 `official_field_*.tsv`。
 - Agent 解析结果变化时，从对应语言的独立数据集重新生成解析查询表；当前发布运行时使用 `analysis_ja.tsv`。
 
 运行时代码不访问 `SaveGames`，也不写剧情旗标、任务、物品、金钱或全局剧情执行索引。
@@ -80,13 +82,13 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 
 - **更新 PAK**：把 `scripts/build_pak/source/` 中的四个 Unreal 资产重新打成 `mod/pak/OctopathDialogueAssistant_P.pak`。Lua、配置和 TSV 都不在这个 PAK 中。
 - **构建安装器**：把 `scripts/installer/Program.cs` 编译为 `OctopathDialogueAssistantInstaller.exe`。该 EXE 只是相邻 `scripts/install.ps1` 与 `scripts/uninstall.ps1` 的图形前端，不内嵌 Lua、TSV、PAK 或 UE4SS。
-- **生成发布包**：`scripts/build-release.ps1` 会统一重新生成 PAK、准备 UE4SS、重新编译安装器并创建 ZIP，因此正式发布前不需要先手动执行 PAK 和安装器的单项构建命令。该命令仍需能够从 `PATH`、`REPAK_PATH` 或 `-RepakPath` 找到 repak；九种官方文本 TSV 和日语解析 TSV 不由该脚本生成，也必须已经存在。
+- **生成发布包**：`scripts/build-release.ps1` 会统一重新生成 PAK、准备 UE4SS、重新编译安装器并创建 ZIP，因此正式发布前不需要先手动执行 PAK 和安装器的单项构建命令。该命令仍需能够从 `PATH`、`REPAK_PATH` 或 `-RepakPath` 找到 repak；十八个官方文本 TSV 和日语剧情解析 TSV 不由该脚本生成，也必须已经存在。人物资料解析 TSV 为可选输入，存在时一并打包。
 
 | 修改内容 | 要单独更新 PAK | 要单独构建安装器 | 更新本机游戏用于验证 | 生成发布 ZIP |
 | --- | --- | --- | --- | --- |
 | `mod/Scripts/main.lua` | 否 | 否 | 运行 `scripts/install.ps1` | 直接运行 `scripts/build-release.ps1` |
 | `mod/Scripts/config.lua` | 否 | 否 | 只影响不存在配置时的新安装；更新安装会保留现有用户配置 | 直接运行 `scripts/build-release.ps1` |
-| `mod/Scripts/official_*.tsv` 的数据来源或目标游戏 build | 否 | 否 | 先运行 `scripts/build_official_texts/build.ps1`，再运行 `scripts/install.ps1` | 先生成九种 TSV，再运行 `scripts/build-release.ps1` |
+| `mod/Scripts/official_*.tsv`、`official_field_*.tsv` 的数据来源或目标游戏 build | 否 | 否 | 先运行 `scripts/build_official_texts/build.ps1`，再运行 `scripts/install.ps1` | 先生成十八个 TSV，再运行 `scripts/build-release.ps1` |
 | `scripts/analysis/{ja,en}/` 的输入、结果或合并逻辑 | 否 | 否 | 先校验并用 `dataset.py build-runtime` 更新运行时 TSV，再运行 `scripts/install.ps1` | 先生成所需运行时 TSV，再运行 `scripts/build-release.ps1` |
 | `scripts/build_pak/source/` 中的设置页或字体资产 | 是 | 否 | 先运行 `scripts/build_pak/build.ps1`，再运行 `scripts/install.ps1` | 直接运行 `scripts/build-release.ps1`，它会重新生成 PAK |
 | `scripts/installer/Program.cs` | 否 | 是 | 运行 `scripts/installer/build.ps1` 后直接测试 EXE | 直接运行 `scripts/build-release.ps1`，它会重新编译安装器 |
@@ -119,7 +121,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_official_texts\build.ps1 
   -UAssetGuiPath "<UAssetGUI 1.1.0 的 UAssetGUI-v1.1.0.exe>"
 ```
 
-脚本从目标 build 的 `TalkData_JA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 与 `KR` 生成对应的 `official_*.tsv`，临时解包内容只进入 `temp/official-texts/`，成功后直接更新 `mod/Scripts/`。这九个生成文件被 Git 忽略，只进入最终发布包，不在用户安装时生成。
+脚本从目标 build 的九种 `TalkData_*` 生成 `official_*.tsv`，并从 `NPCHearData.HistoryTextID` 与九种 `GameText*` 生成 `official_field_*.tsv`。临时解包内容只进入 `temp/official-texts/`，成功后直接更新 `mod/Scripts/`。这十八个生成文件被 Git 忽略，只进入最终发布包，不在用户安装时生成。
 
 ### 5. 生成日语与英语解析数据
 
@@ -213,11 +215,11 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 `
   -GameRoot "<Steam common 下的 Octopath_Traveler2 目录>"
 ```
 
-安装器只复制工作区中的 UE4SS、Lua、配置、覆盖 PAK、九种官方文本和日语解析数据。启动游戏后只验证本次改动涉及的流程；运行时问题查看游戏 `Binaries/Win64/UE4SS.log`。常规开发不执行安装、卸载、重装往返测试，也不生成验证记录、补丁副本或测试制品。
+安装器只复制工作区中的 UE4SS、Lua、配置、覆盖 PAK、九种语言的剧情与人物资料官方文本和日语解析数据。启动游戏后只验证本次改动涉及的流程；运行时问题查看游戏 `Binaries/Win64/UE4SS.log`。常规开发不执行安装、卸载、重装往返测试，也不生成验证记录、补丁副本或测试制品。
 
 ### 9. 一键生成发布包
 
-正式打包前，确保九种 `official_*.tsv` 和完整的 `analysis_ja.tsv` 已按前述步骤生成。repak 已加入 `PATH` 或设置 `REPAK_PATH` 时，从仓库根目录运行：
+正式打包前，确保九种 `official_*.tsv`、九种 `official_field_*.tsv` 和完整的 `analysis_ja.tsv` 已按前述步骤生成。repak 已加入 `PATH` 或设置 `REPAK_PATH` 时，从仓库根目录运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version "1.0.0"
@@ -230,7 +232,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version "1.0
 1. 从 `scripts/build_pak/source/` 重新生成覆盖 PAK；
 2. 下载或复用并校验固定版本 UE4SS；
 3. 从 C# 源码重新编译图形安装器；
-4. 检查九种官方文本 TSV、日语解析 TSV 以及全部安装输入；
+4. 检查十八个官方文本 TSV、日语解析 TSV 以及全部安装输入；
 5. 只把玩家安装所需文件汇集到临时目录；
 6. 输出 `dist/OctopathDialogueAssistant-<版本>.zip`，并在控制台打印 SHA256；临时目录随构建结束清理。
 
@@ -270,7 +272,7 @@ mod/runtime/UE4SS/3.0.1/UE4SS_v3.0.1.zip
 
 当前实现使用 `JumpToSeconds` 定位到目标台词暂停帧，恢复镜头和角色时间轴状态；文本和语音由活动 `TalkText` 原地重置。每句只绑定唯一变化的 RichEvent Player。
 
-运行时捕获入口是 `TalkText_C:PlayVoice`。`EventManagerBP_C:StartTalk` 和每帧执行的 `EventManagerBP_C:UpdateTalk` 都返回控制原生流程的布尔结果，因此不进入 Lua hook 链；普通对话的完成、活动 UI 栈退出和玩家控制恢复完全保留给游戏。
+运行时捕获入口是 `TalkText_C:PlayVoice`。`EventManagerBP_C:StartTalk` 和每帧执行的 `EventManagerBP_C:UpdateTalk` 都返回控制原生流程的布尔结果，因此不进入 Lua hook 链；普通对话的完成、活动 UI 栈退出和玩家控制恢复完全保留给游戏。气泡关闭动画结束的无返回值回调只清理 Mod 自有面板和当前记录的显示状态。
 
 ## 运行时状态
 
@@ -299,19 +301,41 @@ LineRecord
 
 重放时先 Jump 到目标暂停帧，再把保存值写回 `LiveDialogue` 的同长度数组和当前 `BalloonParam`。重建顺序为：恢复目标角色与气泡参数 → 恢复姓名/类型 → `TextIndex = 0` → `InitAnim` → `InitSize` → `SetupBalloonTair` → 再次恢复姓名 → `UpdateTranslation` → `StartAnimation`。`StartAnimation` 调用游戏自己的 `PlayVoice`，文本、姓名、气泡和语音均在活动原生对象上更新。
 
-运行输入由 UE4SS 注册为可配置的无修饰字母键，默认 `R` 重播本句、`G` 回到上一句、`T` 显示或隐藏官方翻译、`V` 显示或隐藏解析。四个快捷键共享同一配置与冲突交换逻辑；解析与翻译共用开关，不依赖所选翻译语言。分析语言拥有独立设置，目前只有日语对应运行时数据，其他选项不会注册为可用的解析动作。
+运行输入由 UE4SS 注册为可配置的无修饰字母键，默认 `R` 重播本句、`G` 回到上一句、`T` 显示或隐藏官方翻译、`V` 显示或隐藏解析。四个快捷键共享同一配置与冲突交换逻辑；解析与翻译共用开关，不依赖所选翻译语言。分析语言拥有独立设置，目前只有日语对应运行时数据，其他选项不会注册为可用的解析动作。未绑定 RichEvent 的普通对话、队友旅途对话和“打听/调查”资料页只接入 `T` 和 `V`，不会对这些界面执行剧情重播。
 
-第一句进入历史时，Mod 取得活动 `UIEventSkip_C` 的 WidgetTree，把已开启功能对应的 `MenuGuideItem_C` 直接加入其根 `CanvasPanel` 或 `Overlay`，按各自右边界锚定到画面右上角，并根据标签实际宽度分别设置偏移，使相邻说明文字与下一枚键帽之间保持一致的视觉间距。`GuideText_00` 使用 `FONT_KS_NewCinema_PC`，`ButtonText` 使用 `FONT_KS_Meldir_PC`。字母经 `KeyConfigButton1WBP_C.UpdateText` 和 `LibText.ConvFontImageText` 转换为本作键帽字形，再写入 `ButtonText`。提示继承剧情控制层的原生可见性，不跟随气泡位置。
+台词绑定 RichEvent 后，Mod 取得活动 `UIEventSkip_C` 的 WidgetTree，把已开启功能对应的 `MenuGuideItem_C` 直接加入其根 `CanvasPanel` 或 `Overlay`，按各自右边界锚定到画面右上角，并根据标签实际宽度分别设置偏移，使相邻说明文字与下一枚键帽之间保持一致的视觉间距。普通对话的两项提示使用 `BalloonBundleWidgetBP_C` 的根 `Overlay`。`GuideText_00` 使用 `FONT_KS_NewCinema_PC`，`ButtonText` 使用 `FONT_KS_Meldir_PC`。字母经 `KeyConfigButton1WBP_C.UpdateText` 和 `LibText.ConvFontImageText` 转换为本作键帽字形，再写入 `ButtonText`。提示继承所属对话界面的原生可见性，不跟随气泡位置。
 
 ## 官方翻译显示
 
-发布前的数据构建从已确认游戏 build 的主 PAK 读取 `TalkData_JA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 与 `KR`，只提取每行的原生行名和 `Text` 数组，分别生成 UTF-8 只读查询文件。安装器直接复制这些发布数据；运行时第一次显示某种语言时延迟加载对应文件，当前 `LineRecord.VoiceLabel` 作为行键，`TextIndex` 选择对应文本槽位。数据来自游戏官方文本表，不经过模型或翻译服务。
+### 普通 NPC 对话
 
-翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再将其挂入 `UIEventSkip_C` 根节点并重新写入文本。控件保留原生 `BG_Root` / `BodyRootBorder` 背景，把内部文本宽度扩展到右上角区域，解除原帮助框约两行的高度上限，并隐藏滚动条，使背景按完整台词高度增长。每次正常推进、重播本句或回到历史句时只刷新文本；再次按翻译快捷键会移除该控件。剧情控制层销毁时控件随其 WidgetTree 一起退出。
+普通对话、剧情台词与 Party Chat 共用 `TalkText_C:PlayVoice` 的 Blueprint 后置捕获，保存已填充的 `DrawTexts`、`VoiceLabel` 数组副本及 `TextIndex`。`record_dialogue_identity` 在首次需要显示面板时校验索引并调用 `match_dialogue_text`：优先使用非空且非 `None` 的语音标签；无配音时按完整文本数组精确匹配官方台词编号。查询结果或失败原因缓存在该条记录中，手动重播使用历史记录自己的文本、编号和索引，不借用其他句的状态。
+
+无配音查询首次使用时加载九种 `official_*.tsv`，在内存中建立一次共用的反向索引。键保留数组长度、每页 UTF-8 字节长度及原文，包含富文本标签、空白和换行，不拼接有碰撞的简单分隔符。相同编号在多个语言中重复出现不算冲突；不同编号对应相同完整数组时标记歧义，禁止按表遍历顺序任选。缺少任一语言数据、索引越界、文本未匹配或歧义时不显示该句结果，日志记录原因。无需新增 TSV 或在线查询。
+
+未绑定 RichEvent 的普通台词标记为 `ordinary_dialogue`，面板与两项快捷键提示挂在当前 `TalkText → WidgetTree → Balloon → WidgetTree → BalloonBundleWidgetBP` 所属的全屏根 `Overlay`，而非可能隐藏的 `UIEventSkip_C` 或随 NPC 移动的单个气泡。取得 RichEvent 绑定后，记录回到剧情界面与现有重播流程。普通记录保留在既有有界历史中，但不对未绑定演出的记录执行重播。
+
+当前普通气泡的 `OnCloseAnimationFinished` 将记录标记为关闭，并清理归属于该记录的面板与提示；另一个气泡的关闭不清理当前句。按键入口额外检查气泡、台词对象、对话容器的有效性与可见性，已关闭的普通台词不再响应翻译或解析。字段资料、旅途对话和普通对话统一按记录所有者清理 Mod 控件，不修改原生关闭结果。
+
+普通对话使用已有 `official_*.tsv` 与 `analysis_ja.tsv`，不增加独立的数据表或安装输入。
+
+### 队友旅途对话（Party Chat）
+
+`TalkText_C:PlayVoice` 到达句子边界时，若 `EventManagerBP_C.PartyChatWidget` 处于可见且挂载到视口的控件层级，运行时以当前 `DrawTexts`、`VoiceLabel` 副本和 `TextIndex` 建立独立的 `party_chat` 记录，沿用上述惰性编号查询。识别不依赖台词前缀，也不注册原生文本查询挂钩。
+
+该记录优先于剧情历史响应翻译和解析，两个面板及快捷键提示均挂入活动 `PartyChat_C` 的根 `CanvasPanel`。下一句刷新当前记录与已打开面板；当前气泡的 `OnCloseAnimationFinished` 清理本句控件，其他气泡的关闭不会清除当前句。离开旅途对话后，视口与可见性检查丢弃失效记录。Party Chat 不写入 RichEvent 重播历史，也不采集或跳转 Sequence。
+
+翻译与解析分别复用已有 `official_*.tsv` 和 `analysis_ja.tsv`，不增加独立的 Party Chat 数据文件；只修改这条接入流程时不需要重新生成 TSV、PAK 或图形安装器。
+
+### 查询与面板
+
+发布前的数据构建从已确认游戏 build 的主 PAK 读取九种 `TalkData_*`、九种 `GameText*` 和 `NPCHearData`，分别生成 UTF-8 只读的对话台词与人物资料查询文件。对话记录以语音标签或完整文本唯一匹配出的编号及原始文本槽位查询；`SearchDetailPartsWidget_C:SetupSearchDetail` 完成后，运行时读取资料页的 `HistoryText`，规范化可见日文并在日文人物资料表中反查 `HistoryTextID`，随后以同一键读取所选语言的官方资料。首次成功取得资料时，游戏传入的 `IsAlreadyCompleted` 为 `false`；该参数影响已取得情报的说明，不作为正文捕获的开关。资料文本规范化分别移除完整的全角空格和 ASCII 空白，不在 Lua 字节字符类中混入 UTF-8 字符；对话文本精确匹配不使用此规范化。数据均来自游戏官方文本表，不经过模型或翻译服务。
+
+翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前内容所有者：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话使用 `BalloonBundleWidgetBP_C`，队友旅途对话使用 `PartyChat_C`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景并按完整文本扩展；剧情推进、重播、回到历史句或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。离开“打听/调查”界面时，关闭回调会先解除资料页控件和对象引用。
 
 ## 日语解析显示
 
-线下结果只保留词汇与语法两类信息，并按 `row_name + text_index` 合并为 UTF-8 的 `analysis_ja.tsv`。运行时第一次按解析键时延迟加载，并以当前 `LineRecord.VoiceLabel + TextIndex` 精确查询；未完成解析的台词显示暂无解析，不会回退到同一行的其他文本槽位。游戏运行过程中没有模型调用或网络请求。
+线下结果按 `row_name + text_index` 合并为 UTF-8 的 `analysis_ja.tsv`。运行时第一次按解析键时延迟加载，并使用与翻译相同的当前台词编号和原始文本槽位精确查询；未完成解析的台词显示暂无解析，不会回退到同一行的其他文本槽位。人物资料解析预留 `analysis_field_ja.tsv` 接口，以 `HistoryTextID + 0` 查询；文件或对应记录尚不存在时显示“当前资料暂无解析”。游戏运行过程中没有模型调用或网络请求。
 
 解析面板同样使用 `HelpWindowWBP_C`，固定锚定在画面左下角。其复合字体以游戏的简体中文对话字体为默认字形，并把简体字库缺少、日文字库具备的原文字符路由到日文对话字体，因此简体中文说明与 `違う` 等日文原词可以在同一个文本控件中完整显示。解析与翻译共用功能开关；只有独立快捷键，不增加第二个开关。所选翻译语言只决定官方翻译面板的数据和字体，不参与解析功能的可用性判断；独立分析语言决定解析数据集，目前仅 `JA` 可用。推进、重播或切换历史句时，可见的解析面板随当前记录刷新。
 
@@ -344,9 +368,9 @@ LineRecord
 
 - `OctopathDialogueAssistantInstaller.exe` 只负责选择游戏目录、调用相邻 `scripts/` 中的安装或卸载脚本，并在窗口中显示脚本输出；发布时必须与仓库中的 `mod/`、`scripts/` 一起提供。
 - 安装器只支持已确认的主程序 SHA256，并固定使用 UE4SS 3.0.1 的压缩包与 DLL 哈希。
-- 固定版本的 UE4SS 安装包与运行配置存放在 `mod/runtime/`；九种官方文本查询文件与日语解析文件随运行时代码存放在 `mod/Scripts/`。
+- 固定版本的 UE4SS 安装包与运行配置存放在 `mod/runtime/`；九种语言的剧情与人物资料官方文本查询文件、日语剧情解析文件以及存在时的人物资料解析文件随运行时代码存放在 `mod/Scripts/`。
 - `scripts/build_official_texts/build.ps1` 使用 `repak`、`UAssetGUI` 和 Python 完成发布前的数据构建，具体命令见 `scripts/build_official_texts/README.md`；这些工具不属于用户安装包或安装流程。安装器只校验并复制仓库内已经生成的运行文件。
-- UE4SS、运行时配置、Lua、九种官方文本查询文件、日语解析查询文件、`mods.txt` 与独立 Mod PAK 都按文件记录 `added`、`modified` 或 `existing` 操作；修改前内容保存到游戏 `Win64` 下的独立备份目录。
+- UE4SS、运行时配置、Lua、十八个官方文本查询文件、日语解析查询文件、`mods.txt` 与独立 Mod PAK 都按文件记录 `added`、`modified` 或 `existing` 操作；修改前内容保存到游戏 `Win64` 下的独立备份目录。
 - `config.lua` 记录为可变的 `user_config`：安装更新不按源文件哈希覆盖用户值，卸载时随 Mod 删除。
 - 游戏 EXE 与主 PAK 仅作为受保护对象记录，不参与复制或修改。
 - `uninstall.ps1` 根据 Mod 内的最小安装状态执行卸载：新增文件删除、修改文件按哈希恢复、既有文件保留；任何安装后哈希漂移都会中止对应操作。

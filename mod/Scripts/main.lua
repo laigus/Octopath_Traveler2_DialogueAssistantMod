@@ -89,6 +89,7 @@ local TRANSLATION_LANGUAGES = {
 local TRANSLATION_LANGUAGE_BY_CODE = {}
 for index, language in ipairs(TRANSLATION_LANGUAGES) do
     language.index = index - 1
+    language.field_data_file = "official_field_" .. string.lower(language.code) .. ".tsv"
     language.font_package = "/Game/UserInterface/Common/Font/PC_Font/" .. language.font
     language.font_object = language.font_package .. "." .. language.font
     TRANSLATION_LANGUAGE_BY_CODE[language.code] = language
@@ -139,7 +140,14 @@ local state = {
     analysis_label = "",
     analysis_data = nil,
     analysis_data_error = nil,
+    field_analysis_data = nil,
+    field_analysis_data_error = nil,
     analysis_ui_error = "",
+    field_info = nil,
+    field_info_error = "",
+    party_chat = nil,
+    dialogue_source_index = nil,
+    dialogue_source_error = nil,
     ui_assets = {},
     option_menu = nil,
     option_menu_open = false,
@@ -355,6 +363,13 @@ local function exact_string(value)
         return tostring(result)
     end
     return tostring(value)
+end
+
+state.normalize_field_text = function(value)
+    local text = exact_string(value)
+    text = text:gsub("<.->", "")
+    text = text:gsub("　", ""):gsub("%s+", "")
+    return text
 end
 
 local function describe_array(value)
@@ -728,21 +743,103 @@ local function analysis_available()
     return config.translation_enabled and config.analysis_language == ANALYSIS_IMPLEMENTED_LANGUAGE
 end
 
-local function load_official_translation_data(language)
+local function load_official_translation_data(language, content_kind)
     language = language or current_translation_language()
     local code = language.code
-    if state.translation_data[code] ~= nil then
-        return state.translation_data[code]
+    content_kind = content_kind == "field_info" and "field_info" or "dialogue"
+    local cache_key = code .. ":" .. content_kind
+    if state.translation_data[cache_key] ~= nil then
+        return state.translation_data[cache_key]
     end
-    if state.translation_data_errors[code] ~= nil then
+    if state.translation_data_errors[cache_key] ~= nil then
         return nil
     end
 
-    local translation_data_path = script_dir .. "\\" .. language.data_file
+    local data_file = content_kind == "field_info" and language.field_data_file or language.data_file
+    local translation_data_path = script_dir .. "\\" .. data_file
     local file, open_error = io.open(translation_data_path, "rb")
     if file == nil then
-        state.translation_data_errors[code] = compact(open_error or "official_translation_file_missing")
-        log(string.format("translation_data_failed language=%s reason=%s", code, state.translation_data_errors[code]))
+        state.translation_data_errors[cache_key] = compact(open_error or "official_translation_file_missing")
+        log(string.format(
+            "translation_data_failed language=%s content=%s reason=%s",
+            code,
+            content_kind,
+            state.translation_data_errors[cache_key]
+        ))
+        return nil
+    end
+
+    local data = {}
+    local source_to_label = {}
+    local row_count = 0
+    local text_count = 0
+    local loaded, load_error = pcall(function()
+        local header = file:read("*l")
+        local header_kind = content_kind == "field_info" and "field-info" or "dialogue"
+        local expected_header = "# OctopathDialogueAssistant official " .. code .. " " .. header_kind .. " v1"
+        if header ~= expected_header then
+            error("official_translation_header_mismatch")
+        end
+        for line in file:lines() do
+            local row_name, index_text, escaped_text = line:match("^([^\t]+)\t(%d+)\t(.*)$")
+            if row_name ~= nil then
+                local row = data[row_name]
+                if row == nil then
+                    row = {}
+                    data[row_name] = row
+                    row_count = row_count + 1
+                end
+                local text = unescape_data_text(escaped_text)
+                row[tonumber(index_text) + 1] = text
+                if content_kind == "field_info" and code == "JA" then
+                    local source_key = state.normalize_field_text(text)
+                    if source_key ~= "" and source_to_label[source_key] == nil then
+                        source_to_label[source_key] = row_name
+                    end
+                end
+                text_count = text_count + 1
+            end
+        end
+    end)
+    file:close()
+
+    local minimum_rows = content_kind == "field_info" and 500 or 30000
+    if not loaded or row_count < minimum_rows then
+        state.translation_data_errors[cache_key] = compact(load_error or "official_translation_data_incomplete")
+        log(string.format(
+            "translation_data_failed language=%s content=%s reason=%s",
+            code,
+            content_kind,
+            state.translation_data_errors[cache_key]
+        ))
+        return nil
+    end
+
+    data.__source_to_label = source_to_label
+    state.translation_data[cache_key] = data
+    log(string.format(
+        "translation_data_ready language=%s content=%s rows=%d texts=%d",
+        code,
+        content_kind,
+        row_count,
+        text_count
+    ))
+    return data
+end
+
+state.load_field_analysis_data = function()
+    if state.field_analysis_data ~= nil then
+        return state.field_analysis_data
+    end
+    if state.field_analysis_data_error ~= nil then
+        return nil
+    end
+
+    local path = script_dir .. "\\analysis_field_ja.tsv"
+    local file, open_error = io.open(path, "rb")
+    if file == nil then
+        state.field_analysis_data_error = compact(open_error or "field_analysis_file_missing")
+        log("field_analysis_data_unavailable reason=" .. state.field_analysis_data_error)
         return nil
     end
 
@@ -751,9 +848,8 @@ local function load_official_translation_data(language)
     local text_count = 0
     local loaded, load_error = pcall(function()
         local header = file:read("*l")
-        local expected_header = "# OctopathDialogueAssistant official " .. code .. " dialogue v1"
-        if header ~= expected_header then
-            error("official_translation_header_mismatch")
+        if header ~= "# OctopathDialogueAssistant analysis JA field-info v1" then
+            error("field_analysis_header_mismatch")
         end
         for line in file:lines() do
             local row_name, index_text, escaped_text = line:match("^([^\t]+)\t(%d+)\t(.*)$")
@@ -771,14 +867,14 @@ local function load_official_translation_data(language)
     end)
     file:close()
 
-    if not loaded or row_count < 30000 then
-        state.translation_data_errors[code] = compact(load_error or "official_translation_data_incomplete")
-        log(string.format("translation_data_failed language=%s reason=%s", code, state.translation_data_errors[code]))
+    if not loaded or text_count < 1 then
+        state.field_analysis_data_error = compact(load_error or "field_analysis_data_empty")
+        log("field_analysis_data_unavailable reason=" .. state.field_analysis_data_error)
         return nil
     end
 
-    state.translation_data[code] = data
-    log(string.format("translation_data_ready language=%s rows=%d texts=%d", code, row_count, text_count))
+    state.field_analysis_data = data
+    log(string.format("field_analysis_data_ready rows=%d texts=%d", row_count, text_count))
     return data
 end
 
@@ -834,16 +930,22 @@ local function load_analysis_data()
 end
 
 local function record_dialogue_identity(record)
-    if record == nil or record.voice_name_values == nil then
+    if record == nil then
         return nil, nil, "dialogue_label_unavailable"
     end
-
-    local label_index = (tonumber(record.text_index_number) or 0) + 1
-    local label = exact_string(record.voice_name_values[label_index] or record.voice_name_values[1])
-    if label == "" then
-        return nil, nil, "dialogue_label_unavailable"
+    if record.kind == "field_info" then
+        if record.lookup_label == nil or record.lookup_label == "" then
+            return nil, nil, "field_info_label_unavailable"
+        end
+        return record.lookup_label, record.lookup_index or 1, nil
     end
-    return label, (tonumber(record.text_index_number) or 0) + 1, nil
+    if record.lookup_label == nil and record.lookup_error == nil then
+        record.lookup_index = record.lookup_index or (tonumber(record.text_index_number) or 0) + 1
+        record.lookup_label, record.lookup_error = state.match_dialogue_text(
+            record.draw_text_values, record.lookup_index, record.voice_name_values
+        )
+    end
+    return record.lookup_label, record.lookup_index, record.lookup_error
 end
 
 local function translation_for_record(record)
@@ -853,9 +955,10 @@ local function translation_for_record(record)
     end
 
     local language = current_translation_language()
-    local data = load_official_translation_data(language)
+    local content_kind = record ~= nil and record.kind == "field_info" and "field_info" or "dialogue"
+    local data = load_official_translation_data(language, content_kind)
     if data == nil then
-        return nil, state.translation_data_errors[language.code], label
+        return nil, state.translation_data_errors[language.code .. ":" .. content_kind], label
     end
     local translated_row = data[label]
     if translated_row == nil then
@@ -874,8 +977,16 @@ local function analysis_for_record(record)
     if identity_error ~= nil then
         return nil, identity_error, ""
     end
-    local data = load_analysis_data()
+    local data = nil
+    if record ~= nil and record.kind == "field_info" then
+        data = state.load_field_analysis_data()
+    else
+        data = load_analysis_data()
+    end
     if data == nil then
+        if record ~= nil and record.kind == "field_info" then
+            return nil, "analysis_row_missing", label
+        end
         return nil, state.analysis_data_error, label
     end
     local row = data[label]
@@ -1136,11 +1247,11 @@ local function configure_shortcut_hint_slot(slot, right_offset)
     return false, "unsupported_slot=" .. slot_class
 end
 
-local function shortcut_hint_specs()
+local function shortcut_hint_specs(include_replay)
     local specs = {}
     local analysis_hint = analysis_available()
     local analysis_width = analysis_hint and 170.0 or 0.0
-    if config.enabled then
+    if include_replay ~= false and config.enabled then
         table.insert(specs, { key = config.replay_current_key, label = "REPLAY", right = 420.0 + analysis_width })
         table.insert(specs, { key = config.replay_previous_key, label = "PREVIOUS", right = 250.0 + analysis_width })
     end
@@ -1199,6 +1310,33 @@ local function find_event_ui()
         return candidate
     end
     return nil
+end
+
+state.widget_is_displayed = function(owner)
+    -- Follow the visible widget hierarchy, excluding cached/off-screen instances.
+    local widget = owner
+    for _ = 1, 16 do
+        if not is_valid_object(widget) or call_no_arg_raw(widget, "IsVisible") ~= true then
+            return false
+        end
+        if call_no_arg_raw(widget, "IsInViewport") == true then
+            return true
+        end
+        widget = widget_parent(widget)
+    end
+    return false
+end
+
+state.find_party_chat_ui = function()
+    local found, manager = pcall(function()
+        return FindFirstOf("EventManagerBP_C")
+    end)
+    manager = unwrap(manager)
+    if not found or not is_valid_object(manager) then
+        return nil
+    end
+    local owner = unwrap(read_raw_field(manager, "PartyChatWidget"))
+    return state.widget_is_displayed(owner) and owner or nil
 end
 
 local function detach_translation_widget()
@@ -1504,7 +1642,12 @@ local function refresh_translation_overlay(record)
         return false
     end
 
-    local owner = find_event_ui()
+    local owner = nil
+    if record ~= nil and (record.overlay_owner ~= nil or record.kind == "ordinary_dialogue") then
+        owner = unwrap(record.overlay_owner)
+    else
+        owner = find_event_ui()
+    end
     local owner_name = full_name(owner)
     if not is_valid_object(owner) or owner_name == "" then
         detach_translation_widget()
@@ -1527,6 +1670,8 @@ local function refresh_translation_overlay(record)
         end
         detach_translation_widget()
         report_translation_ui_error(prepare_error)
+    elseif is_valid_object(widget) then
+        detach_translation_widget()
     end
 
     local widget_tree = unwrap(read_raw_field(owner, "WidgetTree"))
@@ -1676,7 +1821,9 @@ local function refresh_analysis_overlay(record)
     local text, analysis_error, label = analysis_for_record(record)
     if text == nil then
         if analysis_error == "analysis_row_missing" or analysis_error == "analysis_text_missing" then
-            text = "当前台词暂无解析。"
+            text = record ~= nil and record.kind == "field_info"
+                and "当前资料暂无解析。"
+                or "当前台词暂无解析。"
         else
             detach_analysis_widget()
             report_analysis_ui_error(analysis_error)
@@ -1684,7 +1831,12 @@ local function refresh_analysis_overlay(record)
         end
     end
 
-    local owner = find_event_ui()
+    local owner = nil
+    if record ~= nil and (record.overlay_owner ~= nil or record.kind == "ordinary_dialogue") then
+        owner = unwrap(record.overlay_owner)
+    else
+        owner = find_event_ui()
+    end
     local owner_name = full_name(owner)
     if not is_valid_object(owner) or owner_name == "" then
         detach_analysis_widget()
@@ -1704,6 +1856,8 @@ local function refresh_analysis_overlay(record)
         end
         detach_analysis_widget()
         report_analysis_ui_error(prepared and slot_error or prepare_error)
+    elseif is_valid_object(widget) then
+        detach_analysis_widget()
     end
 
     local widget_tree = unwrap(read_raw_field(owner, "WidgetTree"))
@@ -1773,7 +1927,7 @@ local function toggle_analysis_overlay()
         return
     end
     state.analysis_visible = true
-    if not refresh_analysis_overlay(state.current) then
+    if not refresh_analysis_overlay(state.active_record()) then
         state.analysis_visible = false
         detach_analysis_widget()
     end
@@ -1787,29 +1941,34 @@ local function toggle_translation_overlay()
     if state.translation_visible then
         hide_translation_overlay()
         if state.analysis_visible then
-            refresh_analysis_overlay(state.current)
+            refresh_analysis_overlay(state.active_record())
         end
         log("translation_hidden")
         return
     end
     state.translation_visible = true
-    if not refresh_translation_overlay(state.current) then
+    if not refresh_translation_overlay(state.active_record()) then
         state.translation_visible = false
         detach_translation_widget()
     end
     if state.analysis_visible then
-        refresh_analysis_overlay(state.current)
+        refresh_analysis_overlay(state.active_record())
     end
 end
 
-local function ensure_shortcut_hint(talk_text)
-    local specs = shortcut_hint_specs()
+local function ensure_shortcut_hint(talk_text, owner_override, specs_override)
+    local specs = specs_override or shortcut_hint_specs()
     if #specs == 0 then
         clear_shortcut_hint()
         return
     end
 
-    local owner = find_event_ui()
+    local owner = nil
+    if owner_override ~= nil then
+        owner = unwrap(owner_override)
+    else
+        owner = find_event_ui()
+    end
     local owner_name = full_name(owner)
     if not is_valid_object(owner) or owner_name == "" then
         report_shortcut_hint_error("event_ui_unavailable")
@@ -1820,6 +1979,8 @@ local function ensure_shortcut_hint(talk_text)
         if refresh_shortcut_hint_items(owner, specs) then
             return
         end
+        clear_shortcut_hint()
+    elseif state.shortcut_hint_owner ~= "" then
         clear_shortcut_hint()
     end
 
@@ -1874,7 +2035,12 @@ end
 
 local function refresh_live_shortcut_hint()
     clear_shortcut_hint()
-    if is_valid_object(state.live_talk_text) then
+    local owned_record = state.active_record()
+    if owned_record ~= nil and is_valid_object(owned_record.overlay_owner) then
+        ensure_shortcut_hint(nil, owned_record.overlay_owner, shortcut_hint_specs(false))
+        return
+    end
+    if owned_record ~= nil and is_valid_object(state.live_talk_text) then
         ensure_shortcut_hint(state.live_talk_text)
     end
 end
@@ -2744,7 +2910,7 @@ local function change_translation_language(delta, menu)
     detach_translation_widget()
     save_config()
     if state.translation_visible then
-        refresh_translation_overlay(state.current)
+        refresh_translation_overlay(state.active_record())
     end
     refresh_mod_tab(menu)
     log("settings_translation_language_changed language=" .. config.translation_language)
@@ -2801,6 +2967,104 @@ local function parameter_bool(value)
     end
     local text = string.lower(scalar_string(value))
     return text == "true" or text == "1"
+end
+
+state.detach_record_overlays = function(record)
+    local owner_name = record ~= nil and record.overlay_owner_name or ""
+    if owner_name ~= "" and state.translation_owner == owner_name then
+        detach_translation_widget()
+    end
+    if owner_name ~= "" and state.analysis_owner == owner_name then
+        detach_analysis_widget()
+    end
+    if owner_name ~= "" and state.shortcut_hint_owner == owner_name then
+        clear_shortcut_hint()
+    end
+end
+
+state.clear_field_info = function()
+    state.detach_record_overlays(state.field_info)
+    state.field_info = nil
+    state.field_info_error = ""
+end
+
+state.clear_party_chat = function()
+    state.detach_record_overlays(state.party_chat)
+    state.party_chat = nil
+end
+
+state.active_record = function()
+    local record = state.field_info
+    if record ~= nil then
+        if is_valid_object(record.overlay_owner) then
+            return record
+        end
+        state.clear_field_info()
+    end
+    record = state.party_chat
+    if record ~= nil then
+        local owner = state.find_party_chat_ui()
+        if is_valid_object(owner) and full_name(owner) == record.overlay_owner_name then
+            return record
+        end
+        state.clear_party_chat()
+    end
+    record = state.current
+    if record ~= nil and record.kind == "ordinary_dialogue"
+        and (record.closed or not is_valid_object(record.talk_text)
+            or not is_valid_object(record.balloon)
+            or call_no_arg_raw(record.balloon, "IsVisible") ~= true
+            or not state.widget_is_displayed(record.overlay_owner)) then
+        state.detach_record_overlays(record)
+        return nil
+    end
+    return record
+end
+
+state.capture_field_info = function(context)
+    local owner = unwrap(context)
+    if not is_valid_object(owner) then
+        return
+    end
+    local history_text = unwrap(read_raw_field(owner, "HistoryText"))
+    local source_value = call_no_arg_raw(history_text, "GetText")
+    if source_value == nil then
+        source_value = read_raw_field(history_text, "Text")
+    end
+    local source_text = exact_string(source_value)
+    local source_key = state.normalize_field_text(source_text)
+    local ja_data = load_official_translation_data(TRANSLATION_LANGUAGE_BY_CODE.JA, "field_info")
+    local lookup_label = ja_data ~= nil and ja_data.__source_to_label[source_key] or nil
+    if lookup_label == nil or lookup_label == "" then
+        local reason = source_key == "" and "field_info_text_unavailable" or "field_info_label_unmatched"
+        local should_log = reason ~= state.field_info_error
+        state.clear_field_info()
+        state.field_info_error = reason
+        if should_log then
+            log("field_info_unavailable reason=" .. reason)
+        end
+        return
+    end
+
+    local owner_name = full_name(owner)
+    state.clear_party_chat()
+    state.field_info = {
+        kind = "field_info",
+        lookup_label = lookup_label,
+        lookup_index = 1,
+        origin_text = source_text,
+        overlay_owner = owner,
+        overlay_owner_name = owner_name,
+    }
+    state.field_info_error = ""
+    ensure_shortcut_hint(nil, owner, shortcut_hint_specs(false))
+    if state.translation_visible then
+        refresh_translation_overlay(state.field_info)
+    end
+    if state.analysis_visible then
+        refresh_analysis_overlay(state.field_info)
+    end
+    log(string.format("field_info_ready label=%s owner=%s", lookup_label, owner_name))
 end
 
 local function handle_mod_cursor_move(context, to_up)
@@ -3207,6 +3471,12 @@ local function apply_sequence_binding(record, info)
     record.sequence_rate_denominator = info.rate_denominator
     record.sequence_start_frame = info.start_frame
     record.sequence_finish_frame = info.finish_frame
+    if record.kind == "ordinary_dialogue" then
+        record.kind = nil
+        record.overlay_owner = nil
+        record.overlay_owner_name = nil
+        record.closed = nil
+    end
 end
 
 local function collect_sequence_players()
@@ -3362,14 +3632,107 @@ local function append_history(record)
     set_history_index(#state.history)
 end
 
+state.dialogue_text_key = function(texts)
+    if texts == nil or #texts == 0 then
+        return nil
+    end
+    -- Preserve page boundaries, rich-text tags and whitespace without delimiter collisions.
+    local parts = { tostring(#texts) .. ":" }
+    for _, text in ipairs(texts) do
+        parts[#parts + 1] = tostring(#text) .. ":" .. text
+    end
+    return table.concat(parts)
+end
+
+state.match_dialogue_text = function(texts, index, voice_names)
+    if texts == nil or index < 1 or index > #texts or index % 1 ~= 0 then
+        return nil, "dialogue_text_index_unavailable"
+    end
+    local voice_label = voice_names ~= nil and exact_string(voice_names[index] or voice_names[1]) or ""
+    if voice_label ~= "" and voice_label ~= "None" then
+        return voice_label, nil
+    end
+
+    if state.dialogue_source_error ~= nil then
+        return nil, state.dialogue_source_error
+    end
+    if state.dialogue_source_index == nil then
+        -- Native Blueprint function-library hooks are unstable on UE4SS 3.0.1.
+        -- Read only populated TalkText fields; resolve unvoiced lines from local TSV data.
+        local source_index = {}
+        for _, language in ipairs(TRANSLATION_LANGUAGES) do
+            local data = load_official_translation_data(language, "dialogue")
+            if data == nil then
+                state.dialogue_source_error = "dialogue_source_data_unavailable"
+                return nil, state.dialogue_source_error
+            end
+            for row_name, row in pairs(data) do
+                if row_name ~= "__source_to_label" then
+                    local key = state.dialogue_text_key(row)
+                    if key ~= nil then
+                        local previous = source_index[key]
+                        if previous == nil then
+                            source_index[key] = row_name
+                        elseif previous ~= row_name then
+                            source_index[key] = false
+                        end
+                    end
+                end
+            end
+        end
+        state.dialogue_source_index = source_index
+    end
+    local label = state.dialogue_source_index[state.dialogue_text_key(texts)]
+    if label == false then
+        return nil, "dialogue_label_ambiguous"
+    end
+    if label == nil then
+        return nil, "dialogue_label_unmatched"
+    end
+    return label, nil
+end
+
+state.capture_party_chat = function(object)
+    local owner = state.find_party_chat_ui()
+    if not is_valid_object(owner) then
+        state.clear_party_chat()
+        return false
+    end
+
+    state.clear_field_info()
+    local texts = copy_array_values(read_raw_field(object, "DrawTexts"), "string")
+    local index = (tonumber(scalar_string(read_raw_field(object, "TextIndex"))) or 0) + 1
+    local record = {
+        kind = "party_chat",
+        lookup_index = index,
+        draw_text_values = texts,
+        voice_name_values = copy_array_values(read_raw_field(object, "VoiceLabel"), "name"),
+        object_name = full_name(object),
+        talk_text = object,
+        balloon = balloon_from_talk_text(object),
+        overlay_owner = owner,
+        overlay_owner_name = full_name(owner),
+    }
+    state.party_chat = record
+    ensure_shortcut_hint(nil, owner, shortcut_hint_specs(false))
+    refresh_translation_overlay(record)
+    refresh_analysis_overlay(record)
+    log(string.format("party_chat_ready label=%s index=%d owner=%s",
+        record.lookup_label or "", index - 1, record.overlay_owner_name))
+    return true
+end
+
 local function capture_talk_text(context)
     local object = unwrap(context)
-    if object == nil then
+    if not is_valid_object(object) then
+        return
+    end
+    if state.capture_party_chat(object) then
         return
     end
 
+    state.clear_field_info()
     local balloon = balloon_from_talk_text(object)
-    ensure_shortcut_hint(object)
     local draw_text_values, draw_text_error = copy_array_values(read_raw_field(object, "DrawTexts"), "string")
     local voice_name_values, voice_name_error = copy_array_values(read_raw_field(object, "VoiceLabel"), "name")
     local record = {
@@ -3391,6 +3754,7 @@ local function capture_talk_text(context)
         balloon_snapshot = select(1, snapshot_balloon_state(balloon)),
         captured_at = os.time(),
     }
+    record.lookup_index = record.text_index_number + 1
 
     log(string.format(
         "talk voice=%s text_index=%s text=%s object=%s",
@@ -3422,6 +3786,20 @@ local function capture_talk_text(context)
         end
         apply_sequence_binding(record, binding.current)
     end
+    if record.sequence_object == nil then
+        -- The bundle owns screen-space UI; an individual balloon moves with its NPC.
+        local owner = direct_outer(direct_outer(balloon))
+        record.kind = "ordinary_dialogue"
+        record.overlay_owner = owner
+        record.overlay_owner_name = is_valid_object(owner) and full_name(owner) or ""
+        if is_valid_object(owner) then
+            ensure_shortcut_hint(object, owner, shortcut_hint_specs(false))
+        else
+            clear_shortcut_hint()
+        end
+    else
+        ensure_shortcut_hint(object)
+    end
 
     local existing_index = find_history_index(record)
     if existing_index ~= nil then
@@ -3436,6 +3814,46 @@ local function capture_talk_text(context)
 end
 
 local hook_specs = {
+    {
+        name = "DialogueBalloonClosed",
+        path = "/Game/UserInterface/Balloon/BP/Balloon_00.Balloon_00_C:OnCloseAnimationFinished",
+        callback = function(context)
+            local object = unwrap(context)
+            local record = state.party_chat
+            if record ~= nil and is_valid_object(object) and is_valid_object(record.balloon)
+                and full_name(object) == full_name(record.balloon) then
+                state.clear_party_chat()
+            end
+            record = state.current
+            if record ~= nil and record.kind == "ordinary_dialogue"
+                and is_valid_object(object) and is_valid_object(record.balloon)
+                and full_name(object) == full_name(record.balloon) then
+                record.closed = true
+                state.detach_record_overlays(record)
+            end
+        end,
+    },
+    {
+        name = "FieldInfoSetup",
+        path = "/Game/UserInterface/FieldCommand/BP/SearchDetailPartsWidget.SearchDetailPartsWidget_C:SetupSearchDetail",
+        callback = function(context)
+            state.capture_field_info(context)
+        end,
+    },
+    {
+        name = "FieldInfoHearClose",
+        path = "/Game/UserInterface/FieldCommand/BP/FieldCommandWidgetHear.FieldCommandWidgetHear_C:Close",
+        callback = function()
+            state.clear_field_info()
+        end,
+    },
+    {
+        name = "FieldInfoSearchClose",
+        path = "/Game/UserInterface/FieldCommand/BP/FieldCommandWidgetSearch.FieldCommandWidgetSearch_C:Close",
+        callback = function()
+            state.clear_field_info()
+        end,
+    },
     {
         name = "PlayVoice",
         path = "/Game/UserInterface/Balloon/BP/TalkText.TalkText_C:PlayVoice",
@@ -3509,6 +3927,7 @@ local function install_pending_hooks()
     for _, spec in ipairs(hook_specs) do
         if not installed_hooks[spec.name] then
             local ok, pre_id, post_id = pcall(function()
+                -- All hooks target /Game Blueprint functions; the second argument runs after execution.
                 return RegisterHook(spec.path, spec.callback)
             end)
             if ok and pre_id ~= nil then
@@ -3762,6 +4181,11 @@ for _, key_name in ipairs(ALLOWED_SHORTCUT_KEYS) do
             end
             if config.translation_enabled and captured_key_name == config.translation_key then
                 toggle_translation_overlay()
+                return
+            end
+            local active_record = state.active_record()
+            if active_record ~= nil and (active_record.kind == "field_info"
+                or active_record.kind == "party_chat" or active_record.kind == "ordinary_dialogue") then
                 return
             end
             if config.enabled and captured_key_name == config.replay_current_key then
