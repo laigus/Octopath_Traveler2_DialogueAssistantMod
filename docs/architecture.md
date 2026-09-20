@@ -4,7 +4,7 @@
 
 - 只有 `RemoteUnrealParam` / `LocalUnrealParam` 调用 `get()`；UObject 直接进行有效性检查，检查失败即停止访问，不再读取名称作为后备判断。
 - 设置窗口关闭后释放缓存；全局页脚回调只在 Mod 设置页打开时访问窗口。未完成的 Hook 注册在游戏线程重试，全部完成后停止轮询。
-- 所有挂钩均为 `/Game/` Blueprint 函数，使用 `RegisterHook(path, callback)` 的第二参数接收执行后的回调。固定版本 UE4SS 3.0.1 不挂钩原生 Blueprint 函数库；台词只从已填充的 `TalkText_C` 对象读取，不拦截原生结构体输出。
+- 所有挂钩均为 `/Game/` Blueprint 函数，使用 `RegisterHook(path, callback)` 的第二参数接收执行后的回调。固定版本 UE4SS 3.0.1 不挂钩原生 Blueprint 函数库；对话从已填充的 `TalkText_C` 读取，旁白从 `NarrationWidget_C` 的当前页字段读取，不拦截原生结构体输出。
 
 ## 边界
 
@@ -68,7 +68,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 
 ### 2. 选择修改层
 
-- 剧情与普通对话捕获、队友旅途对话捕获、人物资料捕获、历史记录、重播、官方翻译、解析面板、快捷键和设置页交互修改 `mod/Scripts/main.lua`。
+- 剧情与普通对话捕获、队友旅途对话捕获、旁白/说明捕获、人物资料捕获、历史记录、重播、官方翻译、解析面板、快捷键和设置页交互修改 `mod/Scripts/main.lua`。
 - 默认开关、按键和语言修改 `mod/Scripts/config.lua`；安装更新会保留游戏目录中已有的用户配置。
 - 只有设置页分类注册或复合字体映射变化时才更新 `scripts/build_pak/source/` 中的源资产并重新生成 PAK。
 - 游戏官方文本表、人物资料表或受支持 build 变化时，重新生成九种语言的 `official_*.tsv` 与 `official_field_*.tsv`。
@@ -125,7 +125,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build_official_texts\build.ps1 
 
 ### 5. 生成日语与英语解析数据
 
-日语和英语分别使用 `scripts/analysis/ja/` 与 `scripts/analysis/en/`，每套数据集都有自己的 `input/`、`results/` 和 `manifest.json`。输入由对应官方文本与简体中文官方文本生成：
+日语和英语分别使用 `scripts/analysis/ja/` 与 `scripts/analysis/en/`，每套数据集都有自己的 `input/`、`results/` 和 `manifest.json`。
+
+1. 输入由对应官方文本与简体中文官方文本生成：
 
 ```powershell
 python scripts\analysis\tools\dataset.py export `
@@ -141,7 +143,10 @@ python scripts\analysis\tools\dataset.py export `
   --output-dir scripts\analysis\en
 ```
 
-日语结果使用 `reading`，英语结果使用 IPA 字段 `pronunciation`；完整 JSONL 约束和 Agent 指令只维护在 `scripts/analysis/tools/README.md`。Agent 把结果写入对应语言的 `results/`，工具根据 manifest 中的语言选择结果结构。输入、结果和 manifest 都保持 Git 忽略。
+2. Agent 解析
+
+日语结果使用 `reading`，英语结果使用 IPA 字段 `pronunciation`；完整 JSONL 约束和 Agent 指令只维护在 `scripts/analysis/tools/README.md`。
+Agent 把结果写入对应语言的 `results/`，工具根据 manifest 中的语言选择结果结构。
 
 解析过程中可以分别查看和校验两套数据：
 
@@ -153,13 +158,11 @@ python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis
 python scripts\analysis\tools\dataset.py validate --dataset-dir scripts\analysis\en
 ```
 
+3. 生成查询表
+
 所有日语批次完成后生成当前发布运行时使用的查询表：
 
 ```powershell
-python scripts\analysis\tools\dataset.py validate `
-  --dataset-dir scripts\analysis\ja `
-  --require-complete
-
 python scripts\analysis\tools\dataset.py build-runtime `
   --dataset-dir scripts\analysis\ja `
   --output mod\Scripts\analysis_ja.tsv `
@@ -270,7 +273,9 @@ mod/runtime/UE4SS/3.0.1/UE4SS_v3.0.1.zip
 
 主线与旅行记录中的主要演出使用 LevelSequence。Mod 在 `TalkText`/`TalkVoice` 触发时记录当前 Sequence Player 和帧位置，把相邻两次台词触发之间定义为一个句子片段。
 
-当前实现使用 `JumpToSeconds` 定位到目标台词暂停帧，恢复镜头和角色时间轴状态；文本和语音由活动 `TalkText` 原地重置。每句只绑定唯一变化的 RichEvent Player。
+当前实现使用 `JumpToSeconds` 定位到目标台词暂停帧，恢复镜头和角色时间轴状态；文本和语音由活动 `TalkText` 原地重置。每次捕获独立绑定唯一符合条件的 RichEvent Player：首次快照中的暂停播放器、新出现的播放器、切换资源的播放器，或帧位置/状态变化后处于暂停的播放器。第零帧也可作为首句暂停位置；未变化的残留暂停播放器、非剧情资源和未暂停播放器不参与本次绑定，多个候选时不猜测。
+
+普通对话同样更新播放器快照，因此后续剧情首句必须识别快照中新增加的对象，不能只比较已存在对象的帧差。绑定只写入本次 `LineRecord`，不把前一条未绑定的普通对话补归到新剧情，也不重写其他场景的历史身份。首句绑定后直接使用剧情层的四项提示；“上一句话”仍要求目标历史与当前记录属于同一演出。
 
 运行时捕获入口是 `TalkText_C:PlayVoice`。`EventManagerBP_C:StartTalk` 和每帧执行的 `EventManagerBP_C:UpdateTalk` 都返回控制原生流程的布尔结果，因此不进入 Lua hook 链；普通对话的完成、活动 UI 栈退出和玩家控制恢复完全保留给游戏。气泡关闭动画结束的无返回值回调只清理 Mod 自有面板和当前记录的显示状态。
 
@@ -281,6 +286,7 @@ LineRecord
 ├── DrawTexts / VoiceLabel 副本
 ├── 说话人文本与可见性
 ├── BalloonParam 目标角色 / 方向 / 尾巴 / 偏移 / 类型 / 姓名
+├── 窗口类型 / 独白 Canvas 布局 / 原始 TextIndex
 ├── TalkText / Balloon 运行时引用
 ├── RichEvent Sequence Player 与资源路径
 ├── 暂停帧 / 子帧 / 帧率
@@ -297,11 +303,18 @@ LineRecord
 - `VoiceLabel` 中的 `FName`；
 - 说话人文本与相关控件可见性；
 - `BalloonParam.TargetActor`、方向、尾巴、偏移、文本类型与姓名 `FName`；
+- 窗口类型；独白的 `TextBlockSize`、Canvas 槽尺寸/位置/对齐、角色偏移或固定屏幕位置；
 - RichEvent Player、资源、暂停帧与帧率。
 
-重放时先 Jump 到目标暂停帧，再把保存值写回 `LiveDialogue` 的同长度数组和当前 `BalloonParam`。重建顺序为：恢复目标角色与气泡参数 → 恢复姓名/类型 → `TextIndex = 0` → `InitAnim` → `InitSize` → `SetupBalloonTair` → 再次恢复姓名 → `UpdateTranslation` → `StartAnimation`。`StartAnimation` 调用游戏自己的 `PlayVoice`，文本、姓名、气泡和语音均在活动原生对象上更新。
+重放前校验当前活动记录与目标属于同一 RichEvent Player/资源、窗口类型相同、文本与语音数组同形、原始 `TextIndex` 有效。随后 Jump 到目标暂停帧，把保存值写回 `LiveDialogue` 的数组和 `BalloonParam`，由 `rebuild_dialogue_layout` 按窗口类型恢复显示：普通气泡恢复姓名/类型、原始 `TextIndex`，执行 `InitAnim`、`InitSize`、`SetupBalloonTair` 与位置更新；独白恢复文本尺寸、Canvas 槽与原始 `TextIndex`，执行自身的 `InitAnim` 和位置更新，不调用普通气泡方法。最后统一 `StartAnimation`，让游戏自己的 `PlayVoice` 重播语音。准备或启动失败时恢复原文本、语音、索引、窗口布局与时间轴位置。
 
-运行输入由 UE4SS 注册为可配置的无修饰字母键，默认 `R` 重播本句、`G` 回到上一句、`T` 显示或隐藏官方翻译、`V` 显示或隐藏解析。四个快捷键共享同一配置与冲突交换逻辑；解析与翻译共用开关，不依赖所选翻译语言。分析语言拥有独立设置，目前只有日语对应运行时数据，其他选项不会注册为可用的解析动作。未绑定 RichEvent 的普通对话、队友旅途对话和“打听/调查”资料页只接入 `T` 和 `V`，不会对这些界面执行剧情重播。
+### 无边框独白字幕
+
+`Balloon_DeepThink_C` 与 `Balloon_DeepThinkTextFixed_C` 内的 `TalkText_DeepThink_C` 继承 `TalkText_C`，继续使用现有 `PlayVoice` 后置捕获和有界历史。前者按角色位置及 `Offset` 定位，后者通过 `TextPos` 和 `SetPosition` 在上/中/下 Canvas 之间定位。快照只复制向量和数值；回看时对当前活动实例应用对应槽位，不重新创建气泡，不改 `EndFlag`、原生关闭状态或剧情完成委托。
+
+独白重播要求窗口仍可见、局部 `Sequence = 2` 且未结束；上一句只在同一演出与相同窗口类型内恢复。两个独白类各自的无返回值关闭完成回调清理面板和提示，并使关闭的内容退出活动记录；选中历史重播时重新激活目标记录。未绑定 RichEvent 的独白仍只显示翻译/解析。整页装饰边框的 `NarrationWidget_C` 是另一套界面，不走本节的重播流程。
+
+运行输入由 UE4SS 注册为可配置的无修饰字母键，默认 `R` 重播本句、`G` 回到上一句、`T` 显示或隐藏官方翻译、`V` 显示或隐藏解析。四个快捷键共享同一配置与冲突交换逻辑；解析与翻译共用开关，不依赖所选翻译语言。分析语言拥有独立设置，目前只有日语对应运行时数据，其他选项不会注册为可用的解析动作。未绑定 RichEvent 的普通对话、队友旅途对话、旁白/说明和“打听/调查”资料页只接入翻译与解析，不执行剧情重播；旁白另支持方向键滚动长面板。
 
 台词绑定 RichEvent 后，Mod 取得活动 `UIEventSkip_C` 的 WidgetTree，把已开启功能对应的 `MenuGuideItem_C` 直接加入其根 `CanvasPanel` 或 `Overlay`，按各自右边界锚定到画面右上角，并根据标签实际宽度分别设置偏移，使相邻说明文字与下一枚键帽之间保持一致的视觉间距。普通对话和 Party Chat 的两项提示使用各自当前气泡所属 `BalloonBundleWidgetBP_C` 的根 `Overlay`。`GuideText_00` 使用 `FONT_KS_NewCinema_PC`，`ButtonText` 使用 `FONT_KS_Meldir_PC`。字母经 `KeyConfigButton1WBP_C.UpdateText` 和 `LibText.ConvFontImageText` 转换为本作键帽字形，再写入 `ButtonText`。提示继承所属对话界面的原生可见性，不跟随气泡位置。
 
@@ -331,11 +344,21 @@ LineRecord
 
 翻译与解析分别复用已有 `official_*.tsv` 和 `analysis_ja.tsv`，不增加独立的 Party Chat 数据文件；只修改这条接入流程时不需要重新生成 TSV、PAK 或图形安装器。
 
+### 全屏旁白与说明
+
+`NarrationWidget_C:PlayNarration` 和 `PlayNote` 的无返回值 Blueprint 后置回调建立独立的旁白会话。`SetState` 在页面切换完成后读取当前 `DrawMessageList.TextGroup`，按原始顺序复制各段 `Text` 编号，忽略空白占位；每段都对应官方台词表的第零文本槽位。说明模式直接使用 `PlayNote` 传入的 `NoteLabel`，同样读取第零槽位。查询复用 `official_*.tsv` 与 `analysis_ja.tsv`，不拼接原文反查、不依赖语音，也不新增数据表。
+
+独立 `narration` 记录优先于旧对话；原对话标记为关闭，旁白不追加历史、不采集或跳转 Sequence。`State` 为 `1/2/3/8` 且窗口位于可见视口时展示当前页；`CloseMessage`、关闭状态与不可见检查清理 Mod 控件，过渡期间不回落到旧剧情记录。初始 `State = 0` 的准备阶段保留说明编号，真正关闭至 `0` 才释放会话。页码及有序编号构成页面键，同页状态变化保留滚动位置，换页重建记录和面板。
+
+两项提示与面板直接挂到 `NarrationWidget_C.WidgetTree.RootWidget` 的全屏 `Canvas`；翻译和解析按段编号，缺少任一段时不把剩余内容冒充完整页面。旁白面板高度上限为 `760`，显示原生滚动条；无原始动作的 `OnCursorUp/Down` 及 Repeat 回调仅滚动已打开的 Mod 面板，并把位置限制在首尾范围内。其他对话面板的布局与输入保持不变。
+
+针对性验证覆盖截图的六段和五段数据、空白段、说明模式、准备/换页/关闭状态、同页滚动保持、非活动窗口排除与重播隔离。游戏内应分别检查两类截图页面的翻译/解析、方向键滚动及翻页退出后的清理；Lua 模拟不替代实际游戏画面验证。此接入仅需安装 Lua 更新，不重建 TSV、PAK 或图形安装器。
+
 ### 查询与面板
 
 发布前的数据构建从已确认游戏 build 的主 PAK 读取九种 `TalkData_*`、九种 `GameText*` 和 `NPCHearData`，分别生成 UTF-8 只读的对话台词与人物资料查询文件。对话记录以语音标签或完整文本匹配出的编号及原始文本槽位查询；多个候选按上述规则核对共同内容。`SearchDetailPartsWidget_C:SetupSearchDetail` 完成后，运行时读取资料页的 `HistoryText`，规范化可见日文并在日文人物资料表中反查 `HistoryTextID`，随后以同一键读取所选语言的官方资料。首次成功取得资料时，游戏传入的 `IsAlreadyCompleted` 为 `false`；该参数影响已取得情报的说明，不作为正文捕获的开关。资料文本规范化分别移除完整的全角空格和 ASCII 空白，不在 Lua 字节字符类中混入 UTF-8 字符；对话文本精确匹配不使用此规范化。数据均来自游戏官方文本表，不经过模型或翻译服务。
 
-翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前内容所有者：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话和队友旅途对话使用当前气泡所属的 `BalloonBundleWidgetBP_C`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景并按完整文本扩展；剧情推进、重播、回到历史句或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。离开“打听/调查”界面时，关闭回调会先解除资料页控件和对象引用。
+翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前内容所有者：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话和队友旅途对话使用当前气泡所属的 `BalloonBundleWidgetBP_C`，旁白/说明使用 `NarrationWidget_C`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景；剧情推进、重播、回到历史句、旁白翻页或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。旁白和人物资料的关闭流程解除各自控件与引用。
 
 ## 日语解析显示
 

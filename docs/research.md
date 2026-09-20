@@ -6,7 +6,8 @@
 
 - 主线与旅行记录演出资源包含 Camera Cut、角色 Transform、动画、事件、`TalkText` 和 `TalkVoice` 轨道。
 - 活动剧情播放器是 Persistent Level 下的 `LevelSequencePlayer`，资源路径位于 `/Game/Event/RichEvent/`。
-- 相邻两句之间唯一改变当前帧、资源路径属于 RichEvent 且状态为暂停的 Player，可稳定绑定到对应台词。
+- 相邻两句之间唯一改变当前帧、资源路径属于 RichEvent 且状态为暂停的 Player，可绑定到对应台词；新建 Player 的第一条快照没有同名旧对象，必须单独纳入候选。
+- 本机日志中，`TX_MS_SIN_3B_1200_0010_EX1` 出现时播放器总数由 `9` 增为 `10`，下一句 `EX2` 的快照显示新增的 `RI_MS_SIN_3B_1200` Player 从首句的 `140` 帧推进至 `170` 帧。世界地图 UI 播放器同时变化，但资源不属于 RichEvent，须排除。
 - 已确认的剧情资源 `/Game/Event/RichEvent/01_Main/50_SHO/EX3/RI_MS_SHO_EX3_0600` 使用 `30/1` 帧率；相邻台词暂停帧为 `80` 与 `120`，播放器状态值为 `5`。
 - 每条记录保存 Player 引用、Sequence 资源路径、帧、子帧、帧率和起止范围。
 
@@ -50,13 +51,21 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 
 气泡尺寸由 `InitSize` 根据当前文本计算，尾巴布局由 `SetupBalloonTair` 更新，位置由 `TargetActor`、方向与偏移参数共同决定。重放记录同时保存这些字段，并在 `UpdateTranslation` 前恢复。
 
+## 无边框独白字幕（DeepThink）
+
+- `/Game/UserInterface/Balloon/BP/Balloon_DeepThink` 与 `Balloon_DeepThinkTextFixed` 均直接继承原生 `BalloonBase`，不是 `Balloon_00_C` 的子类，没有普通气泡专用的 `InitSize`、`SetupBalloonTair` 和 `SetTypeImageFromTalkChara`。正文 `TalkText_DeepThink_C` 继承 `TalkText_C`，共享 `DrawTexts`、`VoiceLabel`、`TextIndex` 和 `StartAnimation → PlayVoice`。
+- `Balloon_DeepThink_C.UpdateTranslation` 读取 `BalloonParam.TargetActor/Offset/BalloonDir`、自身 `Offset` 和文字尺寸，调用 `TalkText_DeepThink.UpdatePosition` 更新 `CanvasPanel_50` 的槽位置。`Balloon_DeepThinkTextFixed_C.SetPosition(Type)` 把正文移到上/中/下 Canvas，写入 `TextPos`，并按文字尺寸居中。
+- `TalkText_C.InitTextSize` 维护 `TextBlockSize` 和正文 Canvas 槽尺寸；独白快照复制正文、`CanvasPanel_50`、`RefTextBlock`、`RefRichTextBlock` 中有效 Canvas 槽的尺寸、位置与对齐，避免回看不同长度的台词时沿用当前句尺寸。`InitAnim` 按原始 `TextIndex` 重建文本与富文本状态。
+- 两类独白开场动画结束后均设置局部 `Sequence = 2` 并调用正文 `StartAnimation`。关闭后设置 `EndFlag = true`、隐藏窗口并清空完成委托；Mod 只观察 `Balloon_DeepThink_C:WidgetAnimationEvt_Close_K2Node_WidgetAnimationEvent_1` 与 `Balloon_DeepThinkTextFixed_C:CloseAnimationFinish`，不调用这些关闭动作，也不挂钩返回布尔值的 `Init`、`CallNext`、`CloseBalloon`。
+- 截图台词为 `TX_MS_KUS_2M_0100_0020`。`/Game/Event/RichEvent/01_Main/30_KUS/ep2_M/RI_MS_KUS_2M_01A0` 与 `01B0` 的 SequenceDirector 均通过 `BalloonOpenLabel` 显示 `0010/0020/0030` 等台词；此类居中字幕属于 RichEvent 演出，不是 `NarrationWidget_C` 的整页旁白。
+
 ## 原地重放顺序
 
 1. 校验活动 RichEvent Player、暂停状态、Sequence 资源和数组形状。
 2. 保存活动对话与 Sequence 位置。
 3. Jump 到目标句暂停帧。
 4. 写回文本、语音标签、姓名、目标角色与气泡参数。
-5. 执行 `TextIndex = 0`、`InitAnim`、`InitSize`、`SetupBalloonTair`、`UpdateTranslation`。
+5. 恢复记录的原始 `TextIndex` 并执行 `InitAnim`；普通气泡使用 `InitSize`、`SetupBalloonTair` 和位置更新，独白使用自己的 Canvas 布局和位置更新。
 6. 调用 `StartAnimation` 播放文字动画与原声。
 
 运行时保留最近 12 条 `LineRecord`。手动重放触发的 `PlayVoice` 由一次性标记识别，历史索引保持在目标句；正常剧情推进会更新对应记录。
@@ -104,6 +113,16 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 - 已有运行日志记录了 `TalkText_Balloon_C` 的普通 NPC 台词，`VoiceLabel` 是空数组，但 `DrawTexts` 和 `OriginText` 已包含完整日文；单独依赖语音标签不足以识别这类台词。
 - 日志中的学者公会相关两句台词分别对应 `TX_SS_TSn21_0100_0050 + 0` 和 `TX_SS_TSn21_0100_0055 + 0`，当前官方文本与日语解析表均有对应记录。普通 NPC 台词不限定为 `TXT_NPC_*` 或 `TX_NP_*` 前缀。
 - 该活动对象的外层链是 `TalkText_Balloon → WidgetTree → Balloon_03 → WidgetTree → BalloonBundleWidgetBP_C`。`/Game/UserInterface/Balloon/BP/BalloonBundleWidgetBP` 的根控件为 `Overlay_1`，类型是原生 `Overlay`，可承载固定屏幕位置的帮助窗和快捷键提示。
+
+## 全屏旁白与说明（Narration）
+
+- 主窗口资源为 `/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C`，根节点 `Canvas` 是全屏 `CanvasPanel`；`MessageViewList` 中的 `NarrationMessageWidget_C` 承载分段正文，`NoteWidget` 是 `NarrationNoteWidget_C`。
+- `PlayNarration(NarrationSetLabel)` 根据 `NarrationSetTable.LabelList` 构造 `PageText`，`NextPage` 把对应页交给 `SetPlayPageMessage`，随后递增 `PageIndex`。当前页保存在 `DrawMessageList`，段落数组为 `TextGroup`，每段的 `Text` 是官方台词编号，`None` 是留白。
+- `OneLineDraw` 读取上述编号的 `TalkText.Text[0]`，再调用 `NarrationMessageWidget_C:PlayMessage`；`SettingText` 把经过换行处理的正文写入 `Message`。因此应直接复制当前页编号，而不是从已排版文字反查。
+- `PlayNote(NoteLabel, UseBackground)` 读取 `TalkText.Text[0]` 并调用 `NoteWidget.SetText`，最后设置 `NoteMode = true`。它与 `PlayNarration`、`SetState`、`CloseMessage` 均无返回值；Mod 只挂钩这些 Blueprint 回调，不挂钩带布尔返回值的 `SetPlayPageMessage`、`OneLineDraw` 或 `PlayMessage`。
+- `SetState` 写入枚举字段 `State`。字节码中 `1` 为开场/资源准备，`2` 为正文显示，`3` 为新页过渡，`8` 为本页显示完成；`4/5` 是换页等待，`6/7` 是结束/关闭，`9` 等待场景淡入。`Close` 先转入 `7`，关闭动画结束后转入 `0`，随后隐藏窗口。Mod 同时检查窗口层级可见性。
+- `OnCursorUp`、`OnCursorDown` 及对应 Repeat 回调在原始 Blueprint 中为空事件，无输出参数。Mod 用这些回调调整自身 `HelpWindowWBP_C.TextScrollBox` 的滚动偏移；旁白窗口的确认、取消、自动翻页和完成返回值保持原样。
+- 截图一对应 `TX_MS_NAR_KUS_2B_0010` 至 `0060` 六个编号，截图二对应 `TX_MS_SIN_3B_0100_0040` 至 `0080` 五个编号；各编号第零槽位均存在日语原文、官方简体中文和日语解析。
 
 ## 运行边界
 

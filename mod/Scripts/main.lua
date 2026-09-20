@@ -155,6 +155,10 @@ local state = {
     field_info = nil,
     field_info_error = "",
     party_chat = nil,
+    narration = nil,
+    narration_owner = nil,
+    narration_note_label = nil,
+    narration_error = "",
     dialogue_source_index = nil,
     dialogue_source_error = nil,
     ui_assets = {},
@@ -979,6 +983,9 @@ state.shared_dialogue_content = function(data, candidates, text_index, content_k
 end
 
 local function translation_for_record(record)
+    if record ~= nil and record.kind == "narration" then
+        return state.narration_content(record, translation_for_record, "translation")
+    end
     local label, text_index, identity_error, candidates = record_dialogue_identity(record)
     if identity_error ~= nil then
         return nil, identity_error, ""
@@ -1006,6 +1013,9 @@ local function translation_for_record(record)
 end
 
 local function analysis_for_record(record)
+    if record ~= nil and record.kind == "narration" then
+        return state.narration_content(record, analysis_for_record, "analysis")
+    end
     local label, text_index, identity_error, candidates = record_dialogue_identity(record)
     if identity_error ~= nil then
         return nil, identity_error, ""
@@ -1034,6 +1044,23 @@ local function analysis_for_record(record)
         return nil, "analysis_text_missing", label
     end
     return text, nil, label
+end
+
+state.narration_content = function(record, lookup, content_kind)
+    local parts = {}
+    for index, segment in ipairs(record.segments) do
+        local text, reason = lookup(segment)
+        if text == nil then
+            -- Keep every segment in place; never show a partial page as complete.
+            return nil, reason, segment.lookup_label
+        end
+        table.insert(parts, string.format("[%d]\n%s", index, text))
+    end
+    if #parts == 0 then
+        return nil, "narration_page_empty", record.page_key
+    end
+    local heading = content_kind == "analysis" and "旁白解析（方向键上 / 下滚动）\n\n" or ""
+    return heading .. table.concat(parts, "\n\n"), nil, record.page_key
 end
 
 local function write_raw_field(object, field, value)
@@ -1654,7 +1681,7 @@ local function prepare_overlay_widget(widget, text, initialize_font, language, l
         local text_scroll_box = find_named_widget(widget, "TextScrollBox")
         if is_valid_object(text_scroll_box) then
             text_scroll_box:SetScrollOffset(0.0)
-            text_scroll_box:SetScrollBarVisibility(1)
+            text_scroll_box:SetScrollBarVisibility(layout.scrollable and 0 or 1)
         end
         write_raw_field(widget, "IsScrollable", false)
         widget:SetVisibility(3)
@@ -1671,6 +1698,8 @@ local function refresh_translation_overlay(record)
         return false
     end
 
+    local layout = record ~= nil and record.kind == "narration"
+        and { max_height = 760.0, scrollable = true } or nil
     local text, translation_error, label = translation_for_record(record)
     if text == nil then
         report_translation_ui_error(translation_error)
@@ -1701,7 +1730,8 @@ local function refresh_translation_overlay(record)
             widget,
             text,
             false,
-            current_translation_language()
+            current_translation_language(),
+            layout
         )
         if prepared then
             state.translation_label = label
@@ -1731,7 +1761,8 @@ local function refresh_translation_overlay(record)
         new_widget,
         text,
         false,
-        current_translation_language()
+        current_translation_language(),
+        layout
     )
     if not prepared then
         report_translation_ui_error(prepare_error)
@@ -1758,7 +1789,8 @@ local function refresh_translation_overlay(record)
         new_widget,
         text,
         true,
-        current_translation_language()
+        current_translation_language(),
+        layout
     )
     if not font_applied then
         pcall(function()
@@ -1837,7 +1869,7 @@ local function configure_analysis_slot(slot)
     return false, "unsupported_analysis_slot=" .. slot_class
 end
 
-local function prepare_analysis_widget(widget, text, initialize_font)
+local function prepare_analysis_widget(widget, text, initialize_font, record)
     return prepare_overlay_widget(
         widget,
         text,
@@ -1848,6 +1880,7 @@ local function prepare_analysis_widget(widget, text, initialize_font)
             wrap = 630.0,
             max_height = 760.0,
             font_size = 14,
+            scrollable = record ~= nil and record.kind == "narration",
         }
     )
 end
@@ -1890,7 +1923,7 @@ local function refresh_analysis_overlay(record)
     local widget = unwrap(state.analysis_widget)
     local slot = unwrap(state.analysis_slot)
     if state.analysis_owner == owner_name and is_valid_object(widget) and is_valid_object(slot) then
-        local prepared, prepare_error = prepare_analysis_widget(widget, text, false)
+        local prepared, prepare_error = prepare_analysis_widget(widget, text, false, record)
         local configured, slot_error = configure_analysis_slot(slot)
         if prepared and configured then
             state.analysis_label = label
@@ -1919,7 +1952,7 @@ local function refresh_analysis_overlay(record)
         report_analysis_ui_error("create_overlay_widget=" .. compact(widget_error))
         return false
     end
-    local prepared, prepare_error = prepare_analysis_widget(new_widget, text, false)
+    local prepared, prepare_error = prepare_analysis_widget(new_widget, text, false, record)
     if not prepared then
         report_analysis_ui_error(prepare_error)
         return false
@@ -1941,7 +1974,7 @@ local function refresh_analysis_overlay(record)
         return false
     end
 
-    local font_applied, font_error = prepare_analysis_widget(new_widget, text, true)
+    local font_applied, font_error = prepare_analysis_widget(new_widget, text, true, record)
     if not font_applied then
         pcall(function()
             root_widget:RemoveChild(new_widget)
@@ -3036,7 +3069,166 @@ state.clear_party_chat = function()
     state.party_chat = nil
 end
 
+state.clear_narration = function(release_owner)
+    state.detach_record_overlays(state.narration)
+    state.narration = nil
+    if release_owner then
+        state.narration_owner = nil
+        state.narration_note_label = nil
+        state.narration_error = ""
+    end
+end
+
+state.narration_is_open = function(owner)
+    if not state.widget_is_displayed(owner) then
+        return false
+    end
+    local status = tonumber(scalar_string(read_raw_field(owner, "State")))
+    -- Opening/drawing/page-ready states only; exclude fade-out and page transitions.
+    return status == 1 or status == 2 or status == 3 or status == 8
+end
+
+state.begin_narration = function(context, note_label)
+    local owner = unwrap(context)
+    if not is_valid_object(owner) then
+        return
+    end
+    state.clear_narration(true)
+    state.clear_field_info()
+    state.clear_party_chat()
+    detach_translation_widget()
+    detach_analysis_widget()
+    clear_shortcut_hint()
+    if state.current ~= nil then
+        state.current.closed = true
+    end
+    state.narration_owner = owner
+    state.narration_note_label = note_label
+end
+
+state.narration_segments = function(owner)
+    local segments = {}
+    if parameter_bool(read_raw_field(owner, "NoteMode")) then
+        local label = state.narration_note_label
+        if label == nil or label == "" or label == "None" then
+            return nil, "narration_note_label_missing"
+        end
+        return { { lookup_label = label, lookup_index = 1 } }, "note:" .. label
+    end
+
+    -- Copy FNames from the populated page. Do not call/hook native text-table functions.
+    local page = read_raw_field(owner, "DrawMessageList")
+    local group = unwrap(read_raw_field(page, "TextGroup"))
+    local labels = {}
+    local copied, reason = pcall(function()
+        local count = group:GetArrayNum()
+        local visited = 0
+        group:ForEach(function(_, element)
+            visited = visited + 1
+            local label = exact_string(read_raw_field(unwrap(element), "Text"))
+            table.insert(labels, label)
+            if label ~= "" and label ~= "None" then
+                table.insert(segments, { lookup_label = label, lookup_index = 1 })
+            end
+            return false
+        end)
+        if visited ~= count then
+            error("narration_array_count_mismatch")
+        end
+    end)
+    if not copied then
+        return nil, "narration_page_unavailable:" .. compact(reason)
+    end
+    if #segments == 0 then
+        return nil, "narration_page_empty"
+    end
+    local page_index = scalar_string(read_raw_field(owner, "PageIndex"))
+    return segments, "page:" .. page_index .. ":" .. table.concat(labels, "|")
+end
+
+state.sync_narration = function(context, preparing)
+    local owner = unwrap(context)
+    if not is_valid_object(owner) then
+        return
+    end
+    local owner_name = full_name(owner)
+    if owner_name ~= full_name(state.narration_owner) then
+        if not state.narration_is_open(owner) then
+            return
+        end
+        state.begin_narration(owner)
+    end
+    local status = tonumber(scalar_string(read_raw_field(owner, "State")))
+    if status == 0 then
+        state.clear_narration(not preparing)
+        return
+    end
+    if not state.narration_is_open(owner) then
+        state.clear_narration(false)
+        return
+    end
+    local segments, page_key = state.narration_segments(owner)
+    if segments == nil then
+        state.clear_narration(false)
+        if state.narration_error ~= page_key then
+            state.narration_error = page_key
+            log("narration_unavailable reason=" .. page_key)
+        end
+        return
+    end
+    local record = state.narration
+    if record ~= nil and record.overlay_owner_name == owner_name and record.page_key == page_key then
+        return -- State changes within one page must not reset the reading/scroll position.
+    end
+    state.clear_narration(false)
+    record = {
+        kind = "narration",
+        segments = segments,
+        page_key = page_key,
+        overlay_owner = owner,
+        overlay_owner_name = owner_name,
+    }
+    state.narration = record
+    state.narration_error = ""
+    ensure_shortcut_hint(nil, owner, shortcut_hint_specs(false))
+    refresh_translation_overlay(record)
+    refresh_analysis_overlay(record)
+    log(string.format("narration_ready segments=%d page=%s owner=%s", #segments, page_key, owner_name))
+end
+
+state.scroll_narration = function(context, delta)
+    local record = state.narration
+    if record == nil or full_name(unwrap(context)) ~= record.overlay_owner_name
+        or not state.narration_is_open(record.overlay_owner) then
+        return
+    end
+    for _, widget in pairs({ translation = state.translation_widget, analysis = state.analysis_widget }) do
+        local scroll = find_named_widget(widget, "TextScrollBox")
+        if is_valid_object(scroll) then
+            local ok, reason = pcall(function()
+                widget:ForceLayoutPrepass()
+                local offset = scroll:GetScrollOffset()
+                local maximum = scroll:GetScrollOffsetOfEnd()
+                scroll:SetScrollOffset(math.max(0.0, math.min(maximum, offset + delta)))
+            end)
+            if not ok then
+                log("narration_scroll_failed reason=" .. compact(reason))
+            end
+        end
+    end
+end
+
 state.active_record = function()
+    if state.narration_owner ~= nil then
+        if not is_valid_object(state.narration_owner) then
+            state.clear_narration(true)
+        elseif state.narration_is_open(state.narration_owner) then
+            return state.narration
+        else
+            state.clear_narration(false)
+        end
+        return nil -- Never fall back to a previous story line during a narration transition.
+    end
     local record = state.field_info
     if record ~= nil then
         if is_valid_object(record.overlay_owner) then
@@ -3057,8 +3249,12 @@ state.active_record = function()
         return nil
     end
     record = state.current
+    if record ~= nil and record.closed then
+        state.detach_record_overlays(record)
+        return nil
+    end
     if record ~= nil and record.kind == "ordinary_dialogue"
-        and (record.closed or not is_valid_object(record.talk_text)
+        and (not is_valid_object(record.talk_text)
             or not is_valid_object(record.balloon)
             or call_no_arg_raw(record.balloon, "IsVisible") ~= true
             or not state.widget_is_displayed(record.overlay_owner)) then
@@ -3073,6 +3269,7 @@ state.capture_field_info = function(context)
     if not is_valid_object(owner) then
         return
     end
+    state.clear_narration(true)
     local history_text = unwrap(read_raw_field(owner, "HistoryText"))
     local source_value = call_no_arg_raw(history_text, "GetText")
     if source_value == nil then
@@ -3330,6 +3527,47 @@ local function write_field(object, field, value)
     return true, nil
 end
 
+state.dialogue_layout_kind = function(balloon)
+    local name = class_name(balloon)
+    if name:match("%.Balloon_DeepThinkTextFixed_C$") then
+        return "deep_think_fixed"
+    elseif name:match("%.Balloon_DeepThink_C$") then
+        return "deep_think"
+    elseif name:match("%.Balloon_00_C$") then
+        return "balloon"
+    end
+    return nil
+end
+
+state.snapshot_dialogue_layout = function(talk_text, balloon)
+    local kind = state.dialogue_layout_kind(balloon)
+    if kind == nil then return nil end
+    local snapshot = { kind = kind }
+    if kind == "balloon" then return snapshot end
+    snapshot.text_block_size = snapshot_vector2d(read_raw_field(talk_text, "TextBlockSize"))
+    if kind == "deep_think_fixed" then
+        snapshot.text_position = tonumber(scalar_string(read_raw_field(balloon, "TextPos")))
+        if snapshot.text_position == nil then return nil end
+    else
+        snapshot.offset = snapshot_vector2d(read_raw_field(balloon, "Offset"))
+        if snapshot.offset == nil then return nil end
+    end
+    snapshot.slots = {}
+    for _, field in ipairs({ "self", "CanvasPanel_50", "RefTextBlock", "RefRichTextBlock" }) do
+        local widget = field == "self" and talk_text or unwrap(read_raw_field(talk_text, field))
+        local slot = unwrap(read_raw_field(widget, "Slot"))
+        if is_valid_object(slot) and class_name(slot):find("CanvasPanelSlot", 1, true) then
+            local size = snapshot_vector2d(call_no_arg_raw(slot, "GetSize"))
+            local position = snapshot_vector2d(call_no_arg_raw(slot, "GetPosition"))
+            local alignment = snapshot_vector2d(call_no_arg_raw(slot, "GetAlignment"))
+            if size == nil or position == nil or alignment == nil then return nil end
+            snapshot.slots[field] = { size = size, position = position, alignment = alignment }
+        end
+    end
+    if snapshot.slots.self == nil or snapshot.text_block_size == nil then return nil end
+    return snapshot
+end
+
 local function snapshot_balloon_state(balloon)
     balloon = unwrap(balloon)
     local param = unwrap(read_raw_field(balloon, "BalloonParam"))
@@ -3434,25 +3672,55 @@ local function apply_native_speaker_label(balloon, balloon_snapshot, speaker_sna
     end
 end
 
-local function rebuild_balloon_layout(talk_text, balloon, balloon_snapshot, speaker_snapshot, finish_text)
+local function rebuild_dialogue_layout(talk_text, balloon, balloon_snapshot, speaker_snapshot, finish_text, presentation, text_index)
+    if presentation == nil or presentation.kind ~= state.dialogue_layout_kind(balloon) then
+        return false, "dialogue_layout_mismatch"
+    end
     local state_applied, state_error = apply_balloon_state(balloon, balloon_snapshot)
     if not state_applied then
         return false, "balloon_state=" .. tostring(state_error)
     end
 
     local prepared, prepare_error = pcall(function()
+        text_index = tonumber(text_index) or 0
+        if presentation.kind ~= "balloon" then
+            -- DeepThink has no InitSize/SetupBalloonTair. Restore its captured native canvas layout.
+            if presentation.kind == "deep_think_fixed" then
+                balloon.BalloonParam.TextPosition = presentation.text_position
+                balloon:SetPosition(presentation.text_position)
+            else
+                balloon.Offset = presentation.offset
+            end
+            talk_text.TextBlockSize = presentation.text_block_size
+            for field, saved in pairs(presentation.slots) do
+                local widget = field == "self" and talk_text or unwrap(read_raw_field(talk_text, field))
+                local slot = unwrap(read_raw_field(widget, "Slot"))
+                slot:SetSize(saved.size)
+                slot:SetPosition(saved.position)
+                slot:SetAlignment(saved.alignment)
+            end
+            talk_text.TextIndex = text_index
+            talk_text:InitAnim()
+            if finish_text then
+                talk_text:EndAnimation()
+            else
+                talk_text.Animation = false
+            end
+            balloon:UpdateTranslation()
+            return
+        end
         if balloon_snapshot.text_type ~= nil then
-            balloon:SetTypeImageFromTalkChara(0, balloon_snapshot.text_type)
+            balloon:SetTypeImageFromTalkChara(text_index, balloon_snapshot.text_type)
         end
         apply_native_speaker_label(balloon, balloon_snapshot, speaker_snapshot)
-        talk_text.TextIndex = 0
+        talk_text.TextIndex = text_index
         talk_text:InitAnim()
         if finish_text then
             talk_text:EndAnimation()
         else
             talk_text.Animation = false
         end
-        balloon:InitSize(0)
+        balloon:InitSize(text_index)
         balloon:SetupBalloonTair()
         -- InitSize and tail setup change name widget state. Restore it last so
         -- repeated replay keeps the same native name label and visibility.
@@ -3518,12 +3786,6 @@ local function apply_sequence_binding(record, info)
     record.sequence_rate_denominator = info.rate_denominator
     record.sequence_start_frame = info.start_frame
     record.sequence_finish_frame = info.finish_frame
-    if record.kind == "ordinary_dialogue" then
-        record.kind = nil
-        record.overlay_owner = nil
-        record.overlay_owner_name = nil
-        record.closed = nil
-    end
 end
 
 local function collect_sequence_players()
@@ -3572,40 +3834,31 @@ local function log_sequence(prefix, info)
     ))
 end
 
-local function capture_sequence_delta(voice_label)
+local function capture_sequence_binding(voice_label)
     local snapshot, order = collect_sequence_players()
     local previous = state.sequence_snapshot
     local emitted = 0
     local candidates = {}
-    if previous == nil then
-        for _, name in ipairs(order) do
-            local current = snapshot[name]
-            log_sequence("sequence_baseline voice=" .. voice_label, current)
-            emitted = emitted + 1
-            if is_rich_event(current) and current.status_number == 5 and current.frame > 0 then
-                table.insert(candidates, { before = current, current = current })
-            end
+    for _, name in ipairs(order) do
+        local current = snapshot[name]
+        local before = previous and previous[name] or nil
+        local reason = nil
+        if before == nil then
+            reason = previous == nil and "baseline" or "new_player"
+        elseif before.sequence ~= current.sequence then
+            reason = "sequence_changed"
+        elseif before.current ~= current.current then
+            reason = "time_changed"
+        elseif before.status_number ~= current.status_number then
+            reason = "status_changed"
         end
-    else
-        for _, name in ipairs(order) do
-            local current = snapshot[name]
-            local before = previous[name]
-            if before ~= nil and before.current ~= current.current then
-                log(string.format(
-                    "sequence_delta voice=%s object=%s from=%s to=%s sequence=%s actor_asset=%s",
-                    voice_label,
-                    current.object,
-                    before.current,
-                    current.current,
-                    current.sequence,
-                    current.actor_asset
-                ))
-                emitted = emitted + 1
-                if is_rich_event(current)
-                    and before.sequence == current.sequence
-                    and current.status_number == 5 then
-                    table.insert(candidates, { before = before, current = current })
-                end
+        if reason ~= nil then
+            log_sequence("sequence_snapshot reason=" .. reason .. " voice=" .. voice_label, current)
+            emitted = emitted + 1
+            -- A new/reused player can already be paused on its first line.
+            -- Unchanged paused players are not evidence for the current dialogue.
+            if is_rich_event(current) and current.status_number == 5 then
+                table.insert(candidates, { current = current, reason = reason })
             end
         end
     end
@@ -3614,15 +3867,15 @@ local function capture_sequence_delta(voice_label)
     if #candidates == 1 then
         local binding = candidates[1]
         log(string.format(
-            "line_binding voice=%s object=%s from_frame=%s to_frame=%s rate=%s/%s",
+            "line_binding voice=%s object=%s reason=%s frame=%s rate=%s/%s",
             voice_label,
             binding.current.object,
-            tostring(binding.before.frame),
+            binding.reason,
             tostring(binding.current.frame),
             tostring(binding.current.rate_numerator),
             tostring(binding.current.rate_denominator)
         ))
-        return binding
+        return binding.current
     end
     if #candidates > 1 then
         log(string.format("line_binding_skipped voice=%s reason=ambiguous candidates=%d", voice_label, #candidates))
@@ -3648,6 +3901,7 @@ local function set_history_index(index)
     end
     state.history_index = index
     state.current = state.history[index]
+    state.current.closed = nil
     state.previous = state.history[index - 1]
     refresh_translation_overlay(state.current)
     refresh_analysis_overlay(state.current)
@@ -3795,6 +4049,7 @@ local function capture_talk_text(context)
     if not is_valid_object(object) then
         return
     end
+    state.clear_narration(true)
     if state.capture_party_chat(object) then
         return
     end
@@ -3820,6 +4075,7 @@ local function capture_talk_text(context)
         voice_name_error = voice_name_error,
         speaker_snapshot = snapshot_speaker_widgets(balloon),
         balloon_snapshot = select(1, snapshot_balloon_state(balloon)),
+        presentation_snapshot = state.snapshot_dialogue_layout(object, balloon),
         captured_at = os.time(),
     }
     record.lookup_index = record.text_index_number + 1
@@ -3847,12 +4103,10 @@ local function capture_talk_text(context)
     state.live_talk_text = object
     state.live_balloon = balloon
 
-    local binding = capture_sequence_delta(record.voice_label)
+    local binding = capture_sequence_binding(record.voice_label)
     if binding ~= nil then
-        if state.current ~= nil then
-            apply_sequence_binding(state.current, binding.before)
-        end
-        apply_sequence_binding(record, binding.current)
+        -- Bind only this capture; earlier NPC lines or scenes keep their own identity.
+        apply_sequence_binding(record, binding)
     end
     if record.sequence_object == nil then
         -- The bundle owns screen-space UI; an individual balloon moves with its NPC.
@@ -3881,7 +4135,67 @@ local function capture_talk_text(context)
     dump_candidate_properties(object, "talk")
 end
 
+state.close_deep_think = function(context)
+    if state.narration_owner ~= nil or state.field_info ~= nil or state.party_chat ~= nil then return end
+    local object = unwrap(context)
+    local record = state.current
+    if record == nil or not is_valid_object(object) or not is_valid_object(state.live_balloon)
+        or full_name(object) ~= full_name(state.live_balloon) then return end
+    local presentation = record.presentation_snapshot
+    if presentation == nil or presentation.kind == "balloon" then return end
+    record.closed = true
+    detach_translation_widget()
+    detach_analysis_widget()
+    clear_shortcut_hint()
+end
+
 local hook_specs = {
+    {
+        name = "DeepThinkClosed",
+        path = "/Game/UserInterface/Balloon/BP/Balloon_DeepThink.Balloon_DeepThink_C:WidgetAnimationEvt_Close_K2Node_WidgetAnimationEvent_1",
+        callback = function(context)
+            state.close_deep_think(context)
+        end,
+    },
+    {
+        name = "DeepThinkFixedClosed",
+        path = "/Game/UserInterface/Balloon/BP/Balloon_DeepThinkTextFixed.Balloon_DeepThinkTextFixed_C:CloseAnimationFinish",
+        callback = function(context)
+            state.close_deep_think(context)
+        end,
+    },
+    {
+        name = "NarrationPlay",
+        path = "/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C:PlayNarration",
+        callback = function(context)
+            state.begin_narration(context)
+            state.sync_narration(context, true)
+        end,
+    },
+    {
+        name = "NarrationNote",
+        path = "/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C:PlayNote",
+        callback = function(context, note_label)
+            state.begin_narration(context, exact_string(unwrap(note_label)))
+            state.sync_narration(context, true)
+        end,
+    },
+    {
+        name = "NarrationState",
+        path = "/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C:SetState",
+        callback = function(context)
+            state.sync_narration(context)
+        end,
+    },
+    {
+        name = "NarrationPageClose",
+        path = "/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C:CloseMessage",
+        callback = function(context)
+            if full_name(unwrap(context)) == full_name(state.narration_owner) then
+                state.clear_narration(false)
+            end
+        end,
+    },
     {
         name = "DialogueBalloonClosed",
         path = "/Game/UserInterface/Balloon/BP/Balloon_00.Balloon_00_C:OnCloseAnimationFinished",
@@ -3994,6 +4308,18 @@ local hook_specs = {
     },
 }
 
+-- These four native-input Blueprint callbacks have no original narration action or return value.
+for _, event in ipairs({ "OnCursorUp", "OnCursorUpRepeat", "OnCursorDown", "OnCursorDownRepeat" }) do
+    local delta = string.find(event, "Down", 1, true) ~= nil and 96.0 or -96.0
+    table.insert(hook_specs, {
+        name = "Narration" .. event,
+        path = "/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C:" .. event,
+        callback = function(context)
+            state.scroll_narration(context, delta)
+        end,
+    })
+end
+
 local function install_pending_hooks()
     local pending = 0
     for _, spec in ipairs(hook_specs) do
@@ -4042,6 +4368,12 @@ local function replay_history_line(index, label)
         log("native_replay_unavailable label=" .. label .. " reason=no_line")
         return
     end
+    local current = state.active_record()
+    if current == nil or current.sequence_object ~= record.sequence_object
+        or current.sequence_name ~= record.sequence_name then
+        log("native_replay_unavailable label=" .. label .. " reason=different_active_sequence")
+        return
+    end
     if not is_valid_object(record.sequence_player) then
         log("native_replay_unavailable label=" .. label .. " reason=stale_player")
         return
@@ -4079,6 +4411,18 @@ local function replay_history_line(index, label)
         log("native_replay_unavailable label=" .. label .. " reason=no_live_dialogue")
         return
     end
+    local presentation = record.presentation_snapshot
+    local current_presentation = state.snapshot_dialogue_layout(talk_text, balloon)
+    if presentation == nil or current_presentation == nil or presentation.kind ~= current_presentation.kind then
+        log("native_replay_unavailable label=" .. label .. " reason=dialogue_layout_mismatch")
+        return
+    end
+    if presentation.kind ~= "balloon" and (call_no_arg_raw(balloon, "IsVisible") ~= true
+        or tonumber(scalar_string(read_raw_field(balloon, "Sequence"))) ~= 2
+        or read_raw_field(balloon, "EndFlag") == true) then
+        log("native_replay_unavailable label=" .. label .. " reason=deep_think_not_active")
+        return
+    end
     if record.draw_text_values == nil or record.voice_name_values == nil then
         log(string.format(
             "native_replay_unavailable label=%s reason=missing_dialogue_data text=%s voice=%s",
@@ -4088,6 +4432,12 @@ local function replay_history_line(index, label)
         ))
         return
     end
+    local target_index = tonumber(record.text_index_number)
+    if target_index == nil or target_index < 0 or target_index % 1 ~= 0
+        or target_index >= #record.draw_text_values then
+        log("native_replay_unavailable label=" .. label .. " reason=invalid_text_index")
+        return
+    end
 
     local live_draw_texts = read_raw_field(talk_text, "DrawTexts")
     local live_voice_names = read_raw_field(talk_text, "VoiceLabel")
@@ -4095,6 +4445,7 @@ local function replay_history_line(index, label)
     local current_voice_values = copy_array_values(live_voice_names, "name")
     local current_speaker_snapshot = snapshot_speaker_widgets(balloon)
     local current_balloon_snapshot = select(1, snapshot_balloon_state(balloon))
+    local current_text_index = tonumber(scalar_string(read_raw_field(talk_text, "TextIndex"))) or 0
     if current_draw_values == nil or current_voice_values == nil
         or #current_draw_values ~= #record.draw_text_values
         or #current_voice_values ~= #record.voice_name_values
@@ -4105,6 +4456,8 @@ local function replay_history_line(index, label)
     end
 
     local frames_per_second = record.sequence_rate_numerator / record.sequence_rate_denominator
+    local original_history_index = state.history_index
+    local original_closed = record.closed
     local target_seconds = (record.sequence_frame + (record.sequence_subframe or 0)) / frames_per_second
     local restore_seconds = nil
     if live.frame ~= nil and live.rate_numerator ~= nil and live.rate_denominator ~= nil
@@ -4118,6 +4471,10 @@ local function replay_history_line(index, label)
             end)
         end
         state.sequence_snapshot = select(1, collect_sequence_players())
+        record.closed = original_closed
+        if state.history_index ~= original_history_index then
+            set_history_index(original_history_index)
+        end
     end
 
     local jumped, jump_error = pcall(function()
@@ -4148,22 +4505,26 @@ local function replay_history_line(index, label)
         return
     end
 
-    local prepared, prepare_error = rebuild_balloon_layout(
+    local prepared, prepare_error = rebuild_dialogue_layout(
         talk_text,
         balloon,
         record.balloon_snapshot,
         record.speaker_snapshot,
-        false
+        false,
+        presentation,
+        record.text_index_number
     )
     if not prepared then
         replace_array_values(live_draw_texts, current_draw_values)
         replace_array_values(live_voice_names, current_voice_values)
-        rebuild_balloon_layout(
+        rebuild_dialogue_layout(
             talk_text,
             balloon,
             current_balloon_snapshot,
             current_speaker_snapshot,
-            true
+            true,
+            current_presentation,
+            current_text_index
         )
         restore_sequence_time()
         log(string.format("native_replay_failed label=%s step=prepare error=%s", label, compact(prepare_error)))
@@ -4182,12 +4543,14 @@ local function replay_history_line(index, label)
         state.manual_replay = nil
         replace_array_values(live_draw_texts, current_draw_values)
         replace_array_values(live_voice_names, current_voice_values)
-        rebuild_balloon_layout(
+        rebuild_dialogue_layout(
             talk_text,
             balloon,
             current_balloon_snapshot,
             current_speaker_snapshot,
-            true
+            true,
+            current_presentation,
+            current_text_index
         )
         restore_sequence_time()
         log(string.format("native_replay_failed label=%s step=start error=%s", label, compact(start_error)))
@@ -4195,9 +4558,11 @@ local function replay_history_line(index, label)
     end
     state.manual_replay = nil
     set_history_index(index)
-    pcall(function()
-        balloon.CurrentPlayVoice = read_raw_field(talk_text, "Play Voice") == true
-    end)
+    if presentation.kind == "balloon" then
+        pcall(function()
+            balloon.CurrentPlayVoice = read_raw_field(talk_text, "Play Voice") == true
+        end)
+    end
 
     log(string.format(
         "native_replay_in_place label=%s history_index=%d object=%s frame=%s voice=%s balloon=%s",
@@ -4256,8 +4621,8 @@ for _, key_name in ipairs(ALLOWED_SHORTCUT_KEYS) do
                 return
             end
             local active_record = state.active_record()
-            if active_record ~= nil and (active_record.kind == "field_info"
-                or active_record.kind == "party_chat" or active_record.kind == "ordinary_dialogue") then
+            if active_record == nil or active_record.kind == "field_info" or active_record.kind == "narration"
+                or active_record.kind == "party_chat" or active_record.kind == "ordinary_dialogue" then
                 return
             end
             if config.enabled and captured_key_name == config.replay_current_key then
