@@ -76,10 +76,11 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 - `MenuGuideItem_C` 的 `ButtonText` 使用 `FONT_KS_Meldir_PC`，`GuideText_00` 使用 `FONT_KS_NewCinema_PC`，布局为键帽加说明文字。
 - `KeyConfigButton1WBP_C.UpdateText` 调用 `LibText.ConvFontImageText`，把键名转换为键帽字体字符。
 - `UIEventSkip_C` 是剧情中的播放控制层，其根控件为 `Overlay`。Mod 把当前可用功能对应的 `MenuGuideItem_C` 直接加入根节点，并按各标签的实际宽度使用互不相交的右侧 Padding，使相邻说明文字到下一枚键帽的视觉间距一致；提示固定在画面坐标并继承剧情层可见性。
-- `/Game/Talk/Database/` 中存在与原生 Text Language 列表一致的九张表：`TalkData_JA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 和 `KR`。它们使用相同的 `TalkText` 行结构并共享行名；活动 `TalkText_C.VoiceLabel` 可直接命中各官方语言表的对应行，文本位于该行的 `Text` 数组。
+- `/Game/Talk/Database/` 中存在与原生 Text Language 列表一致的九张表：`TalkData_JA`、`EN`、`IT`、`FR`、`DE`、`ES`、`ZH_TW`、`ZH_CN` 和 `KR`。它们使用相同的 `TalkText` 行结构并共享行名，文本位于该行的 `Text` 数组。活动 `TalkText_C.VoiceLabel` 来自独立的语音表，不保证等于文本行名。
+- `TalkVoice_JA` 中，文本行 `TX_MS_KAR_2B_0200_0250` 的 `Voice[0]` 是 `TX_MS_KAR_2B_0200_0250_B`，文本行 `TX_MS_KAR_2B_0200_0280` 的 `Voice[0]` 是 `TX_MS_KAR_2B_0200_0280_A`。前者也由运行日志确认。两行原文、官方简中与解析均存在于当前查询表；第 0250 批 input/results 使用不带后缀的文本编号。对照当前日文文本行，语音表中有 295 个非空语音槽位的语音名不同于文本行名，其中 111 个语音名又是其他文本行的名称；仅检查语音名是否存在于文本表仍不足以识别原文。
 - PC 对话字体表把日语映射到 `FONT_KS_NewCinema_PC`，英语及四种欧洲语言映射到 `FONT_KS_Skech_PC`，繁体中文映射到 `FONT_MJ_TW_FangSong_PC`，简体中文映射到 `FONT_MJ_CN_WeiBei_PC`，韩语映射到 `FONT_KR_YDHopeL_PC`。
 - `HelpWindowWBP_C` 自带 `BG_Root`、`BodyRootBorder` 和自动换行；其中 `HelpText` 是 `KSTextBlock`。原控件的 `TextSizeBox.MaxDesiredHeight = 54.5` 与 `SizeBox_Clipping.MaxDesiredHeight = 53.5` 只容纳约两行，并由 `TextScrollBox` 显示滚动条。Mod 把文本宽度设为 `500`、换行宽度设为 `480`，把两层高度上限放宽到 `800`，隐藏滚动条并让外层 Canvas 槽使用 AutoSize，因此法语等较长官方台词会连同背景完整展开。该类默认会按全局界面语言刷新字体；Mod 在创建实例前临时设置 Blueprint 的 `WidgetTree.HelpText.DisableRefreshFont = true`，并写入所选 `EKSLanguage`、`EKSFontType::Talk` 和对应 PC 对话字体，使实例从首次构造起使用目标语言字库，随后立即恢复模板。
-- 解析结果以 `VoiceLabel` 对应的 `row_name` 和原始 `TextIndex` 建立独立索引；解析面板复用 `HelpWindowWBP_C` 并固定在左下角。原始 `FONT_MJ_CN_WeiBei_PC` 的默认字库缺少部分日文汉字，例如 `違`；Mod PAK 为该复合字体补充精确字符范围并引用游戏已有的 `KS_NewCinema_Std_D` 字体面，因此简体中文说明和日文原词可以混排。解析与翻译共用开关但使用独立的分析语言设置，目前只有日语解析数据。
+- 解析结果以文本 `row_name` 和原始 `TextIndex` 建立独立索引；解析面板复用 `HelpWindowWBP_C` 并固定在左下角。原始 `FONT_MJ_CN_WeiBei_PC` 的默认字库缺少部分日文汉字，例如 `違`；Mod PAK 为该复合字体补充精确字符范围并引用游戏已有的 `KS_NewCinema_Std_D` 字体面，因此简体中文说明和日文原词可以混排。解析与翻译共用开关但使用独立的分析语言设置，目前只有日语解析数据。
 - `OptionMenuWBP_C` 的分类系统由 `InitCategoryTab`、`AddCategoryTab`、`AddCategoryPart`、`CategoryBox`、`CategoryWidgetList` 和 `CategoryCursorPos` 组成；`ChangeCategory` 会按 `CategoryWidgetList` 的最后索引循环切换。
 - Mod PAK 在 `InitCategoryTab` 原有结构体数组建立完成后追加分类 ID `6`，继续交给原生 `AddCategoryTab` 生成第七个分类按钮；UE4SS Lua 侧不读取、构造或传递该原生分类结构体。
 - `UpdateOptionMenuItem(Index)` 负责清理并建立右侧选项列表；具体选项行加入 `OptItemVerticalBox`，`OptItemScrollBox` 只是它的滚动容器。索引 `6` 的原生列表为空，Lua 在 `ChangeCategory` 完成后独立创建八条 `ListItemWidget_Opt1_C`。
@@ -105,7 +106,7 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 - `PartyChat_C:VisibleBackGround` 同时设置自身与 `CanvasPanel_0` 的可见性，并调用 `HideWidgetTemporary`；Mod 不改写此流程。背景层或面板创建成功的日志不代表新增控件已在前景气泡层显示。
 - `SetTalkData` 将事件中的文本编号传给原生 `/Script/Majesty.KSTextStatics:GetTalkText(Label, OutText)`，输出为 `TalkText` 结构；其中 `Text` 字符串数组进入气泡和 `TalkText_C.DrawTexts`。语音另经 `GetTalkVoice` 查询，因此文本编号与 `VoiceLabel` 独立。
 - `TalkText_C:SetText` 保存文本、语音数组并把 `TextIndex` 置零，`StartAnimation` 调用 `PlayVoice`。文本显示使用的原生气泡提供无返回值的 `Balloon_00_C:OnCloseAnimationFinished` 回调。
-- 当前查询文件中 `TX_PTC_*` 与 `TX_PCJ_*` 共 3058 个文本槽位，均有对应日语解析记录；运行时以语音标签或完整文本数组匹配出的编号及原始文本槽位查询，不以这两个前缀限制匹配。不同编号可能有完全相同的原文；没有语音标签消歧时，分别核对所有候选的译文和解析，显示一致结果或内容冲突提示。
+- 当前查询文件中 `TX_PTC_*` 与 `TX_PCJ_*` 共 3058 个文本槽位，均有对应日语解析记录；运行时以完整文本数组匹配出的编号及原始文本槽位查询，不以这两个前缀限制匹配。不同编号可能有完全相同的原文；语音标签仅在属于同文候选时辅助消歧，否则分别核对所有候选的译文和解析，显示一致结果或内容冲突提示。
 
 ## 普通 NPC 对话
 
@@ -116,7 +117,9 @@ UE4SS 侧把 `DrawTexts` 和 `VoiceLabel` 展开为独立元素副本。重放�
 
 ## 全屏旁白与说明（Narration）
 
-- 主窗口资源为 `/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C`，根节点 `Canvas` 是全屏 `CanvasPanel`；`MessageViewList` 中的 `NarrationMessageWidget_C` 承载分段正文，`NoteWidget` 是 `NarrationNoteWidget_C`。
+- 主窗口资源为 `/Game/UserInterface/Narration/BP/NarrationWidget.NarrationWidget_C`，根节点 `Canvas` 是全屏 `CanvasPanel`，资产明确设置 `Clipping = ClipToBoundsAlways`；原生背景与装饰框槽位使用 `1280 × 720` 布局。`MessageViewList` 中的 `NarrationMessageWidget_C` 承载分段正文，`NoteWidget` 是 `NarrationNoteWidget_C`。
+- 壁画截图对应 `TX_MS_KAR_2B_0100_0010` 至 `0040`。本机日志同时存在四段 `narration_ready`、提示创建和翻译/解析创建成功记录，而截图未显示 Mod 控件；数据捕获和按键触发成功不等同于实际可见。显示容器独立于该旁白画布，游戏内画面仍需验证。
+- `/Game/UserInterface/Common/BP/MenuGuideItem.MenuGuideItem_C` 直接继承 `UserWidget`，根节点为 `Overlay_0`，未实现 Tick/Paint。Mod 可创建单独实例并清空其根子节点作为前景宿主；不清空旁白根节点，也不改该 Blueprint 模板。
 - `PlayNarration(NarrationSetLabel)` 根据 `NarrationSetTable.LabelList` 构造 `PageText`，`NextPage` 把对应页交给 `SetPlayPageMessage`，随后递增 `PageIndex`。当前页保存在 `DrawMessageList`，段落数组为 `TextGroup`，每段的 `Text` 是官方台词编号，`None` 是留白。
 - `OneLineDraw` 读取上述编号的 `TalkText.Text[0]`，再调用 `NarrationMessageWidget_C:PlayMessage`；`SettingText` 把经过换行处理的正文写入 `Message`。因此应直接复制当前页编号，而不是从已排版文字反查。
 - `PlayNote(NoteLabel, UseBackground)` 读取 `TalkText.Text[0]` 并调用 `NoteWidget.SetText`，最后设置 `NoteMode = true`。它与 `PlayNarration`、`SetState`、`CloseMessage` 均无返回值；Mod 只挂钩这些 Blueprint 回调，不挂钩带布尔返回值的 `SetPlayPageMessage`、`OneLineDraw` 或 `PlayMessage`。

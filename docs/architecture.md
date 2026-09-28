@@ -44,7 +44,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 | `mod/Scripts/analysis_field_ja.tsv` | 人物资料解析的可选运行时接口 | 忽略 | 存在时包含 |
 | `mod/pak/OctopathDialogueAssistant_P.pak` | 从 `scripts/build_pak/source/` 生成 | 忽略 | 包含 |
 | `mod/runtime/UE4SS/` | 从固定上游版本下载并校验 | 忽略 | 包含 |
-| `OctopathDialogueAssistantInstaller.exe` | 从 `scripts/installer/Program.cs` 编译 | 忽略 | 包含 |
+| `OctopathDialogueAssistantInstaller.exe` | 从 `scripts/installer/Program.cs` 与 `GameDirectoryLocator.cs` 编译 | 忽略 | 包含 |
 | `dist/` | `scripts/build-release.ps1` 的输出 | 忽略 | GitHub Release 资产 |
 
 完成构建后，工作区中的 `mod/` 是安装脚本使用的发布输入，但它不直接镜像游戏目录。安装器按用途映射各部分：
@@ -81,7 +81,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 先区分三个动作：
 
 - **更新 PAK**：把 `scripts/build_pak/source/` 中的四个 Unreal 资产重新打成 `mod/pak/OctopathDialogueAssistant_P.pak`。Lua、配置和 TSV 都不在这个 PAK 中。
-- **构建安装器**：把 `scripts/installer/Program.cs` 编译为 `OctopathDialogueAssistantInstaller.exe`。该 EXE 只是相邻 `scripts/install.ps1` 与 `scripts/uninstall.ps1` 的图形前端，不内嵌 Lua、TSV、PAK 或 UE4SS。
+- **构建安装器**：把 `scripts/installer/Program.cs` 与 `GameDirectoryLocator.cs` 编译为 `OctopathDialogueAssistantInstaller.exe`。该 EXE 只是相邻 `scripts/install.ps1` 与 `scripts/uninstall.ps1` 的图形前端，不内嵌 Lua、TSV、PAK 或 UE4SS。
 - **生成发布包**：`scripts/build-release.ps1` 会统一重新生成 PAK、准备 UE4SS、重新编译安装器并创建 ZIP，因此正式发布前不需要先手动执行 PAK 和安装器的单项构建命令。该命令仍需能够从 `PATH`、`REPAK_PATH` 或 `-RepakPath` 找到 repak；十八个官方文本 TSV 和日语剧情解析 TSV 不由该脚本生成，也必须已经存在。人物资料解析 TSV 为可选输入，存在时一并打包。
 
 | 修改内容 | 要单独更新 PAK | 要单独构建安装器 | 更新本机游戏用于验证 | 生成发布 ZIP |
@@ -91,7 +91,7 @@ Git 保存必要源码、构建脚本、文档和 PAK 源资产；生成数据�
 | `mod/Scripts/official_*.tsv`、`official_field_*.tsv` 的数据来源或目标游戏 build | 否 | 否 | 先运行 `scripts/build_official_texts/build.ps1`，再运行 `scripts/install.ps1` | 先生成十八个 TSV，再运行 `scripts/build-release.ps1` |
 | `scripts/analysis/{ja,en}/` 的输入、结果或合并逻辑 | 否 | 否 | 先校验并用 `dataset.py build-runtime` 更新运行时 TSV，再运行 `scripts/install.ps1` | 先生成所需运行时 TSV，再运行 `scripts/build-release.ps1` |
 | `scripts/build_pak/source/` 中的设置页或字体资产 | 是 | 否 | 先运行 `scripts/build_pak/build.ps1`，再运行 `scripts/install.ps1` | 直接运行 `scripts/build-release.ps1`，它会重新生成 PAK |
-| `scripts/installer/Program.cs` | 否 | 是 | 运行 `scripts/installer/build.ps1` 后直接测试 EXE | 直接运行 `scripts/build-release.ps1`，它会重新编译安装器 |
+| `scripts/installer/Program.cs` 或 `GameDirectoryLocator.cs` | 否 | 是 | 运行 `scripts/installer/build.ps1` 后直接测试 EXE | 直接运行 `scripts/build-release.ps1`，它会重新编译安装器 |
 | `scripts/install.ps1`、`uninstall.ps1` 或 `common.ps1` | 否 | 否；EXE 会在运行时调用这些脚本 | 只运行本次修改涉及的安装或卸载命令 | 直接运行 `scripts/build-release.ps1`，更新后的脚本会进入 ZIP |
 | `mod/runtime/UE4SS-settings.ini` 或 `scripts/common.ps1` 中固定的 UE4SS 版本 | 否 | 否 | 按改动准备对应运行时，再验证安装 | 运行 `scripts/build-release.ps1`；它会下载或复用并校验固定运行时 |
 | `README.md` 或 `README.en.md` | 否 | 否 | 不安装 | 只有需要把新 README 放进发布 ZIP 时才重新打包 |
@@ -109,6 +109,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version "<�
 ```
 
 因此，只修改 `main.lua` 时：本机验证只需重新运行安装命令；要生成对外发布包时，只需运行一次发布命令，不需要先单独生成 PAK，也不需要先单独构建安装器。发布脚本仍会为保证包内组件一致而重新生成这两项。
+
+### 安装器目录检测与记忆
+
+`Program.cs` 负责 WinForms 交互和脚本调用，`GameDirectoryLocator.cs` 负责目录检测、规范化与记忆。窗口显示后在后台线程检测，结果通过 `BeginInvoke` 回到界面；检测期间禁用安装操作，关闭窗口不会等待后台查找。
+
+优先读取 `HKCU\Software\OctopathDialogueAssistant\Installer` 的字符串值 `GameRoot`，仅在主程序仍存在时恢复。无有效记忆时，读取当前用户及 32/64 位系统注册表中的 Steam 路径、Steam App `1971650` 的卸载注册位置，以及标准 Steam 安装目录；通过 `steamapps/libraryfolders.vdf` 的 `path` 查找附加库，再读取各库的 `appmanifest_1971650.acf`。只有 App ID 正确、`installdir` 是单个合法目录名且游戏主程序存在的候选才显示，路径忽略大小写去重，不递归扫描磁盘。多个候选不自动选中，保留可输入的下拉框和手动浏览。
+
+浏览或从候选列表选择有效目录、执行安装/卸载以及关闭窗口时保存当前有效路径；无效输入不覆盖已有记忆。注册表不可读时继续自动查找，不可写时提示但不阻止当前操作。路径记忆属于当前 Windows 用户，不随 Mod 卸载删除，也不进入发布包。检测只检查目录形状，实际安装仍由原脚本执行游戏退出状态、build 和文件哈希检查，不因自动填入而跳过。
 
 ### 4. 生成官方文本查询文件
 
@@ -322,9 +330,13 @@ LineRecord
 
 ### 普通 NPC 对话
 
-普通对话、剧情台词与 Party Chat 共用 `TalkText_C:PlayVoice` 的 Blueprint 后置捕获，保存已填充的 `DrawTexts`、`VoiceLabel` 数组副本及 `TextIndex`。`record_dialogue_identity` 在首次需要显示面板时校验索引并调用 `match_dialogue_text`：优先使用非空且非 `None` 的语音标签；无配音时按完整文本数组精确匹配官方台词编号。唯一编号、候选编号列表或失败原因缓存在该条记录中，手动重播使用历史记录自己的文本、候选和索引，不借用其他句的状态。
+普通对话、剧情台词与 Party Chat 共用 `TalkText_C:PlayVoice` 的 Blueprint 后置捕获，保存已填充的 `DrawTexts`、`VoiceLabel` 数组副本及 `TextIndex`。`record_dialogue_identity` 在首次需要显示面板时校验索引并调用 `match_dialogue_text`：有无配音均先按完整文本数组精确匹配官方台词编号；唯一命中时直接使用，多个候选时仅允许候选中的语音标签辅助消歧，否则保留全部候选。语音编号可能带变体后缀或复用其他台词的音频，不直接作为文本编号，也不通过截掉后缀猜编号。唯一编号、候选编号列表或失败原因缓存在该条记录中，手动重播使用历史记录自己的文本、候选和索引，不借用其他句的状态。查询身份不改写用于重播的原始语音数组。
 
-无配音查询首次使用时加载九种 `official_*.tsv`，在内存中建立一次共用的反向索引。键保留数组长度、每页 UTF-8 字节长度及原文，包含富文本标签、空白和换行，不拼接有碰撞的简单分隔符。同一编号在多个语言中出现时去重；不同编号对应相同完整数组时保存排序后的全部候选，不任选编号，也不直接丢弃重复台词。缺少任一语言数据、索引越界或文本未匹配时不显示该句结果，日志记录原因。无需新增 TSV 或在线查询。
+Mod 启动后由 `start_dialogue_data_load` 启动一次分批预加载，读取九种 `official_*.tsv`、建立共用反向索引，再读取 `analysis_ja.tsv`。`LoopAsync(10, ...)` 每次恢复同一个 Lua 协程；读取行、建立键和整理候选的循环均设检查点，每轮以约 2 ms 或 1024 个工作项为让出条件，不把完整加载搬到另一条长回调中。预算是协作式让出目标，不是磁盘 I/O、系统调度或 Lua GC 的硬实时上限。后台仅处理文件和 Lua 数据，不访问 UObject 或 UMG；单张表通过校验后才进入缓存，反向索引在九种语言和候选排序全部完成后才发布。完成或失败后停止定时任务，关闭打开的文件，不持续轮询。相关调度接口见 [LoopAsync](https://docs.ue4ss.com/release/lua-api/global-functions/loopasync.html) 与 [ExecuteInGameThread](https://docs.ue4ss.com/release/lua-api/global-functions/executeingamethread.html)。
+
+按键与对话 Hook 中的对话查询只读已完成缓存，不执行同步文件扫描或全表索引。未准备好时返回 `dialogue_data_pending`，该状态不缓存为记录的永久查询错误；翻译与解析面板分别显示准备提示。预加载结束后仅调度一次游戏线程刷新，重新取得当时的活动记录、语言和面板开关，不捕获旧句或旧控件；切句时显示新句、关闭后不重新弹出。文件缺失、表头错误和异常与准备中状态分开处理，错误不触发同步回退加载。人物资料的小型 `official_field_*.tsv` 与可选资料解析继续按需读取，不参与对话全表预加载。
+
+反向索引的键保留数组长度、每页 UTF-8 字节长度及原文，包含富文本标签、空白和换行，不拼接有碰撞的简单分隔符。同一编号在多个语言中出现时去重；不同编号对应相同完整数组时保存排序后的全部候选，不任选编号，也不直接丢弃重复台词。缺少任一语言数据、索引越界或文本未匹配时不显示该句结果，日志记录原因。无需新增 TSV 或在线查询。
 
 `shared_dialogue_content` 在当前原始槽位逐项核对所有候选，翻译使用当前所选语言，解析使用日语解析表。各自候选均存在且内容逐字一致时显示共同结果；缺行或缺槽位按对应数据缺失处理，不跨页取值。内容不同时返回 `dialogue_content_ambiguous`：翻译面板按所选语言显示冲突提示，解析面板显示中文提示，两者不互相阻断。切换翻译语言时重新比较该语言的内容，不复用其他语言的比较结果。日志用 `shared:` 前缀加排序后的首个候选作为稳定引用，记录本身仍保留全部候选，不把它冒充已确认的唯一编号。
 
@@ -350,19 +362,23 @@ LineRecord
 
 独立 `narration` 记录优先于旧对话；原对话标记为关闭，旁白不追加历史、不采集或跳转 Sequence。`State` 为 `1/2/3/8` 且窗口位于可见视口时展示当前页；`CloseMessage`、关闭状态与不可见检查清理 Mod 控件，过渡期间不回落到旧剧情记录。初始 `State = 0` 的准备阶段保留说明编号，真正关闭至 `0` 才释放会话。页码及有序编号构成页面键，同页状态变化保留滚动位置，换页重建记录和面板。
 
-两项提示与面板直接挂到 `NarrationWidget_C.WidgetTree.RootWidget` 的全屏 `Canvas`；翻译和解析按段编号，缺少任一段时不把剩余内容冒充完整页面。旁白面板高度上限为 `760`，显示原生滚动条；无原始动作的 `OnCursorUp/Down` 及 Repeat 回调仅滚动已打开的 Mod 面板，并把位置限制在首尾范围内。其他对话面板的布局与输入保持不变。
+旁白内容所有者与显示容器分离：`narration_owner` 始终指向原生 `NarrationWidget_C`，用于页码、正文、可见性与输入判断；`narration_host` 是 Mod 新建的 `MenuGuideItem_C` 实例，只清空这个实例的 `Overlay` 子节点作为透明全屏容器，通过 `AddToViewport(10000)` 挂入前景。宿主不可聚焦且为 `HitTestInvisible`，不加入游戏活动 UI 栈；两项提示和帮助面板挂到它的 `Overlay`，使用与剧情层相同的边缘定位，不依赖旁白 `Canvas` 的裁剪、尺寸或内部层级。原生窗口和 Blueprint 模板均不改动。
+
+每条旁白记录分别保存 `narration_owner_name` 与宿主 `overlay_owner_name`。同页状态变化保留宿主及面板滚动位置；翻页、关闭、失效或进入其他对话时，先移除 Mod 控件，再隐藏并 `RemoveFromParent` 释放宿主。`OnCursorUp/Down` 及 Repeat 回调按原生旁白对象匹配，只滚动该会话已打开的面板，不把独立宿主误作输入来源。创建或视口挂载失败时保留原生页面并记录具体失败步骤。
+
+翻译和解析按段编号，缺少任一段时不把剩余内容冒充完整页面。旁白面板高度上限为 `760`，显示原生滚动条，滚动位置限制在首尾范围内。其他对话面板的布局与输入保持不变。
 
 针对性验证覆盖截图的六段和五段数据、空白段、说明模式、准备/换页/关闭状态、同页滚动保持、非活动窗口排除与重播隔离。游戏内应分别检查两类截图页面的翻译/解析、方向键滚动及翻页退出后的清理；Lua 模拟不替代实际游戏画面验证。此接入仅需安装 Lua 更新，不重建 TSV、PAK 或图形安装器。
 
 ### 查询与面板
 
-发布前的数据构建从已确认游戏 build 的主 PAK 读取九种 `TalkData_*`、九种 `GameText*` 和 `NPCHearData`，分别生成 UTF-8 只读的对话台词与人物资料查询文件。对话记录以语音标签或完整文本匹配出的编号及原始文本槽位查询；多个候选按上述规则核对共同内容。`SearchDetailPartsWidget_C:SetupSearchDetail` 完成后，运行时读取资料页的 `HistoryText`，规范化可见日文并在日文人物资料表中反查 `HistoryTextID`，随后以同一键读取所选语言的官方资料。首次成功取得资料时，游戏传入的 `IsAlreadyCompleted` 为 `false`；该参数影响已取得情报的说明，不作为正文捕获的开关。资料文本规范化分别移除完整的全角空格和 ASCII 空白，不在 Lua 字节字符类中混入 UTF-8 字符；对话文本精确匹配不使用此规范化。数据均来自游戏官方文本表，不经过模型或翻译服务。
+发布前的数据构建从已确认游戏 build 的主 PAK 读取九种 `TalkData_*`、九种 `GameText*` 和 `NPCHearData`，分别生成 UTF-8 只读的对话台词与人物资料查询文件。对话记录以完整文本匹配出的编号及原始文本槽位查询，语音标签仅辅助同文候选消歧；多个候选按上述规则核对共同内容。`SearchDetailPartsWidget_C:SetupSearchDetail` 完成后，运行时读取资料页的 `HistoryText`，规范化可见日文并在日文人物资料表中反查 `HistoryTextID`，随后以同一键读取所选语言的官方资料。首次成功取得资料时，游戏传入的 `IsAlreadyCompleted` 为 `false`；该参数影响已取得情报的说明，不作为正文捕获的开关。资料文本规范化分别移除完整的全角空格和 ASCII 空白，不在 Lua 字节字符类中混入 UTF-8 字符；对话文本精确匹配不使用此规范化。数据均来自游戏官方文本表，不经过模型或翻译服务。
 
-翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前内容所有者：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话和队友旅途对话使用当前气泡所属的 `BalloonBundleWidgetBP_C`，旁白/说明使用 `NarrationWidget_C`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景；剧情推进、重播、回到历史句、旁白翻页或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。旁白和人物资料的关闭流程解除各自控件与引用。
+翻译开启后，Mod 使用游戏已有的 `HelpWindowWBP_C`。创建实例前，Lua 临时把该 Blueprint 的 `HelpText` 模板设为 `DisableRefreshFont = true`、所选 `EKSLanguage`、`EKSFontType::Talk` 和该语言的原生 PC 对话字体，让新实例在建立 Slate 文本控件时直接复制正确字库，并阻止该控件按当前界面语言重新选择字体；实例建立后立即恢复原模板，不影响游戏随后创建的帮助框。Mod 同时把相同字段写入新实例，再把它挂入当前显示容器：绑定剧情演出的台词使用 `UIEventSkip_C`，普通对话和队友旅途对话使用当前气泡所属的 `BalloonBundleWidgetBP_C`，旁白/说明使用独立的 `narration_host`，人物资料使用 `SearchDetailPartsWidget_C`。控件保留原生背景；剧情推进、重播、回到历史句、旁白翻页或人物选择变化时刷新当前记录，再次按翻译快捷键时移除。旁白和人物资料的关闭流程解除各自控件与引用。
 
 ## 日语解析显示
 
-线下结果按 `row_name + text_index` 合并为 UTF-8 的 `analysis_ja.tsv`。运行时第一次按解析键时延迟加载，并使用与翻译相同的当前台词编号和原始文本槽位精确查询；未完成解析的台词显示暂无解析，不会回退到同一行的其他文本槽位。人物资料解析预留 `analysis_field_ja.tsv` 接口，以 `HistoryTextID + 0` 查询；文件或对应记录尚不存在时显示“当前资料暂无解析”。游戏运行过程中没有模型调用或网络请求。
+线下结果按 `row_name + text_index` 合并为 UTF-8 的 `analysis_ja.tsv`，运行时在上述启动分批任务中准备，首次按解析键也只查询缓存。使用与翻译相同的当前台词编号和原始文本槽位精确查询；准备中显示等待提示，数据就绪后仍无解析的台词显示暂无解析，不会回退到同一行的其他文本槽位。人物资料解析预留 `analysis_field_ja.tsv` 接口，以 `HistoryTextID + 0` 查询；文件或对应记录尚不存在时显示“当前资料暂无解析”。游戏运行过程中没有模型调用或网络请求。
 
 解析面板同样使用 `HelpWindowWBP_C`，固定锚定在画面左下角。其复合字体以游戏的简体中文对话字体为默认字形，并把简体字库缺少、日文字库具备的原文字符路由到日文对话字体，因此简体中文说明与 `違う` 等日文原词可以在同一个文本控件中完整显示。解析与翻译共用功能开关；只有独立快捷键，不增加第二个开关。所选翻译语言只决定官方翻译面板的数据和字体，不参与解析功能的可用性判断；独立分析语言决定解析数据集，目前仅 `JA` 可用。推进、重播或切换历史句时，可见的解析面板随当前记录刷新。
 

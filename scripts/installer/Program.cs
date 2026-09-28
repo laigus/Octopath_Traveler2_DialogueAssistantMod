@@ -27,13 +27,14 @@ namespace OctopathDialogueAssistantInstaller
     internal sealed class InstallerForm : Form
     {
         private readonly string packageRoot;
-        private readonly TextBox gameRootTextBox;
+        private readonly ComboBox gameRootBox;
         private readonly Button browseButton;
         private readonly Button installButton;
         private readonly Button uninstallButton;
         private readonly Label statusLabel;
         private readonly RichTextBox outputTextBox;
         private bool running;
+        private bool detecting;
 
         public InstallerForm()
         {
@@ -59,11 +60,14 @@ namespace OctopathDialogueAssistantInstaller
             pathLabel.Text = "游戏目录（Steam common 下的 Octopath_Traveler2 文件夹）";
             Controls.Add(pathLabel);
 
-            gameRootTextBox = new TextBox();
-            gameRootTextBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            gameRootTextBox.Location = new Point(28, 96);
-            gameRootTextBox.Size = new Size(568, 23);
-            Controls.Add(gameRootTextBox);
+            gameRootBox = new ComboBox();
+            gameRootBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            gameRootBox.Location = new Point(28, 96);
+            gameRootBox.Size = new Size(568, 23);
+            gameRootBox.DropDownStyle = ComboBoxStyle.DropDown;
+            gameRootBox.DropDownWidth = 660;
+            gameRootBox.SelectionChangeCommitted += delegate { RememberGameDirectory(); };
+            Controls.Add(gameRootBox);
 
             browseButton = new Button();
             browseButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -108,12 +112,67 @@ namespace OctopathDialogueAssistantInstaller
             outputTextBox.Size = new Size(666, 238);
             outputTextBox.Text = "安装器会调用同目录 scripts 文件夹中的安装或卸载脚本。\r\n";
             Controls.Add(outputTextBox);
+            Shown += delegate { DetectGameDirectory(); };
+        }
+
+        private void DetectGameDirectory()
+        {
+            detecting = true;
+            SetControlsEnabled(false);
+            statusLabel.Text = "正在查找游戏目录……";
+            Thread worker = new Thread(delegate()
+            {
+                GameDirectorySearchResult result = null;
+                string error = null;
+                try { result = GameDirectoryLocator.Find(); }
+                catch (Exception exception) { error = exception.Message; }
+                try
+                {
+                    if (IsDisposed || Disposing) return;
+                    BeginInvoke(new Action(delegate
+                    {
+                        detecting = false;
+                        SetControlsEnabled(true);
+                        if (result != null && result.Directories.Length == 1)
+                        {
+                            gameRootBox.Items.Add(result.Directories[0]);
+                            gameRootBox.SelectedIndex = 0;
+                            statusLabel.Text = result.Remembered ? "已恢复上次目录" : "已自动找到游戏目录";
+                            AppendOutput(statusLabel.Text + "：" + result.Directories[0] + Environment.NewLine);
+                        }
+                        else if (result != null && result.Directories.Length > 1)
+                        {
+                            gameRootBox.Items.AddRange(result.Directories);
+                            statusLabel.Text = "找到多个目录，请从下拉列表选择";
+                            AppendOutput("找到多个有效安装位置；请自行选择，不会自动安装。" + Environment.NewLine);
+                        }
+                        else
+                        {
+                            statusLabel.Text = "未找到游戏，请手动选择目录";
+                            if (error != null) AppendOutput("自动查找未完成：" + error + Environment.NewLine);
+                        }
+                    }));
+                }
+                catch (InvalidOperationException) { /* The window was closed during discovery. */ }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+        }
+
+        private void RememberGameDirectory()
+        {
+            string error;
+            if (!GameDirectoryLocator.Remember(gameRootBox.Text, out error) && error != null)
+            {
+                AppendOutput("目录记忆未保存，本次仍可继续：" + error + Environment.NewLine);
+            }
         }
 
         private void InstallerFormClosing(object sender, FormClosingEventArgs e)
         {
             if (!running)
             {
+                if (!detecting) RememberGameDirectory();
                 return;
             }
             e.Cancel = true;
@@ -126,43 +185,35 @@ namespace OctopathDialogueAssistantInstaller
             {
                 dialog.Description = "选择 Steam common 下的 Octopath_Traveler2 文件夹";
                 dialog.ShowNewFolderButton = false;
-                if (Directory.Exists(gameRootTextBox.Text))
+                if (Directory.Exists(gameRootBox.Text))
                 {
-                    dialog.SelectedPath = gameRootTextBox.Text;
+                    dialog.SelectedPath = gameRootBox.Text;
                 }
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    gameRootTextBox.Text = dialog.SelectedPath;
+                    string root;
+                    if (!GameDirectoryLocator.TryGetGameRoot(dialog.SelectedPath, out root))
+                    {
+                        ShowInputError("该目录中没有找到游戏主程序，请选择 Octopath_Traveler2 游戏根目录。");
+                        return;
+                    }
+                    gameRootBox.Text = root;
+                    statusLabel.ForeColor = SystemColors.ControlText;
                     statusLabel.Text = "目录已选择";
+                    RememberGameDirectory();
                 }
             }
         }
 
         private void RunInstallerScript(string scriptName, string actionName)
         {
-            if (running)
+            if (running || detecting)
             {
                 return;
             }
 
             string gameRoot;
-            try
-            {
-                gameRoot = Path.GetFullPath(gameRootTextBox.Text.Trim()).TrimEnd(Path.DirectorySeparatorChar);
-            }
-            catch
-            {
-                ShowInputError("请选择有效的游戏目录。");
-                return;
-            }
-
-            string gameExecutable = Path.Combine(
-                gameRoot,
-                "Octopath_Traveler2",
-                "Binaries",
-                "Win64",
-                "Octopath_Traveler2-Win64-Shipping.exe");
-            if (!File.Exists(gameExecutable))
+            if (!GameDirectoryLocator.TryGetGameRoot(gameRootBox.Text, out gameRoot))
             {
                 ShowInputError("所选目录中没有找到游戏主程序。请选择 Steam common 下的 Octopath_Traveler2 文件夹。");
                 return;
@@ -190,6 +241,7 @@ namespace OctopathDialogueAssistantInstaller
             statusLabel.ForeColor = SystemColors.ControlText;
             statusLabel.Text = actionName + "中……";
             outputTextBox.Clear();
+            RememberGameDirectory();
             AppendOutput("游戏目录：" + gameRoot + Environment.NewLine);
             AppendOutput("正在执行" + actionName + "……" + Environment.NewLine + Environment.NewLine);
 
@@ -277,7 +329,7 @@ namespace OctopathDialogueAssistantInstaller
 
         private void SetControlsEnabled(bool enabled)
         {
-            gameRootTextBox.Enabled = enabled;
+            gameRootBox.Enabled = enabled;
             browseButton.Enabled = enabled;
             installButton.Enabled = enabled;
             uninstallButton.Enabled = enabled;

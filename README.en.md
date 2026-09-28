@@ -8,8 +8,11 @@ A dialogue-focused language-learning mod for *OCTOPATH TRAVELER II*. It includes
 - **Previous line**: Replays the complete performance for the previous line, then returns to the current story position. The default key is `G`.
 - **Official translation**: Displays the game's official text for the current story line, ordinary NPC dialogue, Party Chat line, or completed Inquire/Scrutinize profile. The key is configurable and defaults to `T`; the default translation language is Simplified Chinese.
 - **Language analysis**: Displays vocabulary, readings, parts of speech, and grammar for the current Japanese story, NPC dialogue, or Party Chat line. The key is configurable and defaults to `V`; the default analysis language is Japanese. The profile screen is connected to the same analysis interface and shows a no-data message until profile analysis data is added.
-- **Key hints**: Shows all four shortcuts for lines bound to a story sequence, and the translation/analysis shortcuts for ordinary NPC dialogue, Party Chat, and Inquire/Scrutinize profiles.
+- **Narration/note pages**: Supports translation and analysis, numbered in the current page's paragraph order. Hints and panels use a separate full-screen foreground layer, outside the narration canvas's clipping. Use `Up` / `Down` to scroll open panels. Pages update automatically, and the foreground layer is removed when the page closes; narration does not participate in story replay.
+- **Key hints**: Shows all four shortcuts for lines bound to a story sequence, and the translation/analysis shortcuts for ordinary NPC dialogue, Party Chat, narration/notes, and Inquire/Scrutinize profiles.
 - **Configuration**: Adds a configuration category to the in-game Options menu for feature toggles, shortcut keys, translation language, and analysis language.
+
+Translation and analysis identify lines by their complete source text, including lines whose voice and text IDs differ; original-voice replay is unchanged. Dialogue lookup data is prepared in small batches after startup rather than loaded all at once on a keypress. Opening a panel early shows a preparation message, then automatically displays the current line when ready. Advancing dialogue, changing languages, and closing panels still work during preparation.
 
 ![Replay, official translation, and language analysis shown in game](assets/1.png)
 
@@ -42,9 +45,11 @@ The translation and analysis language selectors use the same nine-language list 
 
 Download `OctopathDialogueAssistant-<version>.zip` from [Releases](https://github.com/laigus/Octopath_Traveler2_DialogueAssistantMod/releases/latest). The package includes the pinned UE4SS 3.0.1 runtime, official text lookup data for all nine languages, and Japanese analysis data. Extract the complete archive, exit the game, and double-click `OctopathDialogueAssistantInstaller.exe` inside it:
 
-1. Click `选择目录` (Select Folder) and select the `Octopath_Traveler2` folder under the Steam `common` directory.
+1. The installer restores the last valid game folder first. On first use, or if that folder no longer exists, it searches Steam and its additional libraries. One match is filled in automatically; multiple matches appear in the dropdown. If none is found, click `选择目录` (Select Folder) and choose `Octopath_Traveler2` under Steam's `common` directory.
 2. Click `安装 / 更新` (Install / Update).
 3. Start the game after the window reports `安装完成` (Installation Complete).
+
+Valid folders are remembered in the current Windows user's registry, so the choice survives moving the installer or extracting a new package. You can always change the folder manually. Detection does not start installation; installation still checks that the game is closed and the build is supported.
 
 You can also install from the extracted package root with PowerShell:
 
@@ -58,7 +63,7 @@ The runtime log is located at `Binaries\Win64\UE4SS.log` inside the game directo
 
 ## Uninstall
 
-Exit the game, open `OctopathDialogueAssistantInstaller.exe`, select the same game directory, and click `卸载` (Uninstall). You can also run:
+Exit the game, open `OctopathDialogueAssistantInstaller.exe`, confirm the automatically filled or manually selected game directory, and click `卸载` (Uninstall). You can also run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -GameRoot "<Octopath_Traveler2 folder under Steam common>"

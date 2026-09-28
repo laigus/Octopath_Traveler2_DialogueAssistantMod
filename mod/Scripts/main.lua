@@ -3,6 +3,7 @@ local VERSION = "1.0.0"
 local MAX_HISTORY = 12
 local MENU_GUIDE_PACKAGE = "/Game/UserInterface/Common/BP/MenuGuideItem"
 local MENU_GUIDE_CLASS = MENU_GUIDE_PACKAGE .. ".MenuGuideItem_C"
+local NARRATION_OVERLAY_Z_ORDER = 10000
 local KEY_CONVERTER_PACKAGE = "/Game/UserInterface/Option/BP/KeyConfigButton1WBP"
 local KEY_CONVERTER_CLASS = KEY_CONVERTER_PACKAGE .. ".KeyConfigButton1WBP_C"
 local TOGGLE_BUTTON_PACKAGE = "/Game/UserInterface/Option/BP/ToggleButtonWBP"
@@ -33,6 +34,7 @@ local ALLOWED_SHORTCUT_KEYS = {
 local TRANSLATION_LANGUAGES = {
     {
         code = "JA",
+        loading_text = "オフラインデータを準備中…",
         ambiguous_text = "同じ原文に異なる訳文があるため、表示する訳文を特定できません。",
         enum = "EKSLanguage::eJA",
         data_file = "official_ja.tsv",
@@ -40,6 +42,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "EN",
+        loading_text = "Preparing offline data...",
         ambiguous_text = "This line matches multiple different translations; the correct entry is not yet identified.",
         enum = "EKSLanguage::eEN",
         data_file = "official_en.tsv",
@@ -47,6 +50,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "IT",
+        loading_text = "Preparazione dei dati offline...",
         ambiguous_text = "Questa battuta corrisponde a traduzioni diverse; la voce corretta non è ancora identificata.",
         enum = "EKSLanguage::eIT",
         data_file = "official_it.tsv",
@@ -54,6 +58,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "FR",
+        loading_text = "Préparation des données hors ligne...",
         ambiguous_text = "Cette réplique correspond à plusieurs traductions différentes ; la bonne entrée reste à identifier.",
         enum = "EKSLanguage::eFR",
         data_file = "official_fr.tsv",
@@ -61,6 +66,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "DE",
+        loading_text = "Offline-Daten werden vorbereitet...",
         ambiguous_text = "Dieser Text hat mehrere unterschiedliche Übersetzungen; der richtige Eintrag ist noch nicht bestimmt.",
         enum = "EKSLanguage::eDE",
         data_file = "official_de.tsv",
@@ -68,6 +74,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "ES",
+        loading_text = "Preparando datos sin conexión...",
         ambiguous_text = "Esta frase coincide con varias traducciones diferentes; aún no se ha identificado la entrada correcta.",
         enum = "EKSLanguage::eES",
         data_file = "official_es.tsv",
@@ -75,6 +82,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "ZH_TW",
+        loading_text = "正在準備離線資料…",
         ambiguous_text = "這句原文對應多個不同譯文，暫未確定具體台詞。",
         enum = "EKSLanguage::eZH_TW",
         data_file = "official_zh_tw.tsv",
@@ -82,6 +90,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "ZH_CN",
+        loading_text = "正在准备离线数据…",
         ambiguous_text = "这句原文对应多个不同译文，暂未确定具体台词。",
         enum = "EKSLanguage::eZH_CN",
         data_file = "official_zh_cn.tsv",
@@ -89,6 +98,7 @@ local TRANSLATION_LANGUAGES = {
     },
     {
         code = "KR",
+        loading_text = "오프라인 데이터 준비 중…",
         ambiguous_text = "같은 원문에 서로 다른 번역이 있어 정확한 대사를 아직 식별하지 못했습니다.",
         enum = "EKSLanguage::eKR",
         data_file = "official_kr.tsv",
@@ -157,10 +167,15 @@ local state = {
     party_chat = nil,
     narration = nil,
     narration_owner = nil,
+    narration_host = nil,
     narration_note_label = nil,
     narration_error = "",
     dialogue_source_index = nil,
     dialogue_source_error = nil,
+    dialogue_load_job = nil,
+    dialogue_load_file = nil,
+    dialogue_load_error = nil,
+    dialogue_load_limits = { seconds = 0.002, items = 1024 },
     ui_assets = {},
     option_menu = nil,
     option_menu_open = false,
@@ -756,7 +771,14 @@ local function analysis_available()
     return config.translation_enabled and config.analysis_language == ANALYSIS_IMPLEMENTED_LANGUAGE
 end
 
-local function load_official_translation_data(language, content_kind)
+state.data_load_checkpoint = function()
+    state.dialogue_load_items = state.dialogue_load_items + 1
+    if state.dialogue_load_items >= state.dialogue_load_limits.items or os.clock() >= state.dialogue_load_deadline then
+        coroutine.yield()
+    end
+end
+
+local function load_official_translation_data(language, content_kind, prepare)
     language = language or current_translation_language()
     local code = language.code
     content_kind = content_kind == "field_info" and "field_info" or "dialogue"
@@ -767,10 +789,15 @@ local function load_official_translation_data(language, content_kind)
     if state.translation_data_errors[cache_key] ~= nil then
         return nil
     end
+    -- Dialogue tables are prepared in bounded startup slices, never in input/hook callbacks.
+    if content_kind == "dialogue" and not prepare then
+        return nil
+    end
 
     local data_file = content_kind == "field_info" and language.field_data_file or language.data_file
     local translation_data_path = script_dir .. "\\" .. data_file
     local file, open_error = io.open(translation_data_path, "rb")
+    if prepare then state.dialogue_load_file = file end
     if file == nil then
         state.translation_data_errors[cache_key] = compact(open_error or "official_translation_file_missing")
         log(string.format(
@@ -812,9 +839,11 @@ local function load_official_translation_data(language, content_kind)
                 end
                 text_count = text_count + 1
             end
+            if prepare then state.data_load_checkpoint() end
         end
     end)
     file:close()
+    if prepare then state.dialogue_load_file = nil end
 
     local minimum_rows = content_kind == "field_info" and 500 or 30000
     if not loaded or row_count < minimum_rows then
@@ -891,16 +920,20 @@ state.load_field_analysis_data = function()
     return data
 end
 
-local function load_analysis_data()
+local function load_analysis_data(prepare)
     if state.analysis_data ~= nil then
         return state.analysis_data
     end
     if state.analysis_data_error ~= nil then
         return nil
     end
+    if not prepare then
+        return nil
+    end
 
     local analysis_data_path = script_dir .. "\\" .. ANALYSIS_DATA_FILE
     local file, open_error = io.open(analysis_data_path, "rb")
+    state.dialogue_load_file = file
     if file == nil then
         state.analysis_data_error = compact(open_error or "analysis_file_missing")
         log("analysis_data_failed reason=" .. state.analysis_data_error)
@@ -927,9 +960,11 @@ local function load_analysis_data()
                 row[tonumber(index_text) + 1] = unescape_data_text(escaped_text)
                 text_count = text_count + 1
             end
+            state.data_load_checkpoint()
         end
     end)
     file:close()
+    state.dialogue_load_file = nil
 
     if not loaded or text_count < 1 then
         state.analysis_data_error = compact(load_error or "analysis_data_empty")
@@ -957,6 +992,11 @@ local function record_dialogue_identity(record)
         record.lookup_label, record.lookup_error, record.lookup_candidates = state.match_dialogue_text(
             record.draw_text_values, record.lookup_index, record.voice_name_values
         )
+        if record.lookup_error == "dialogue_data_pending" then
+            -- Loading is transient: the same live/history record must resolve after publication.
+            record.lookup_error = nil
+            return nil, record.lookup_index, "dialogue_data_pending"
+        end
     end
     return record.lookup_label, record.lookup_index, record.lookup_error, record.lookup_candidates
 end
@@ -995,7 +1035,8 @@ local function translation_for_record(record)
     local content_kind = record ~= nil and record.kind == "field_info" and "field_info" or "dialogue"
     local data = load_official_translation_data(language, content_kind)
     if data == nil then
-        return nil, state.translation_data_errors[language.code .. ":" .. content_kind], label or ""
+        return nil, state.translation_data_errors[language.code .. ":" .. content_kind]
+            or state.dialogue_load_error or "dialogue_data_pending", label or ""
     end
     if candidates ~= nil then
         return state.shared_dialogue_content(data, candidates, text_index, "official_translation")
@@ -1030,7 +1071,7 @@ local function analysis_for_record(record)
         if record ~= nil and record.kind == "field_info" then
             return nil, "analysis_row_missing", label
         end
-        return nil, state.analysis_data_error, label or ""
+        return nil, state.analysis_data_error or state.dialogue_load_error or "dialogue_data_pending", label or ""
     end
     if candidates ~= nil then
         return state.shared_dialogue_content(data, candidates, text_index, "analysis")
@@ -1702,10 +1743,13 @@ local function refresh_translation_overlay(record)
         and { max_height = 760.0, scrollable = true } or nil
     local text, translation_error, label = translation_for_record(record)
     if text == nil then
-        report_translation_ui_error(translation_error)
-        if translation_error == "dialogue_content_ambiguous" then
+        if translation_error == "dialogue_data_pending" then
+            text = current_translation_language().loading_text
+        elseif translation_error == "dialogue_content_ambiguous" then
+            report_translation_ui_error(translation_error)
             text = current_translation_language().ambiguous_text
         else
+            report_translation_ui_error(translation_error)
             detach_translation_widget()
             return false
         end
@@ -1893,7 +1937,9 @@ local function refresh_analysis_overlay(record)
 
     local text, analysis_error, label = analysis_for_record(record)
     if text == nil then
-        if analysis_error == "dialogue_content_ambiguous" then
+        if analysis_error == "dialogue_data_pending" then
+            text = "正在准备离线解析…"
+        elseif analysis_error == "dialogue_content_ambiguous" then
             text = "这句原文对应多个不同解析，暂未确定具体台词。"
             report_analysis_ui_error(analysis_error)
         elseif analysis_error == "analysis_row_missing" or analysis_error == "analysis_text_missing" then
@@ -3072,11 +3118,48 @@ end
 state.clear_narration = function(release_owner)
     state.detach_record_overlays(state.narration)
     state.narration = nil
+    local host = state.narration_host
+    state.narration_host = nil
+    if is_valid_object(host) then
+        pcall(function()
+            host:SetVisibility(1)
+            host:RemoveFromParent()
+        end)
+    end
     if release_owner then
         state.narration_owner = nil
         state.narration_note_label = nil
         state.narration_error = ""
     end
+end
+
+state.create_narration_host = function(owner)
+    -- Reuse only a new MenuGuideItem's Overlay shell, not the narration's clipped Canvas.
+    -- This UserWidget has no tick/paint override and is never pushed onto the game's UI stack.
+    local host, create_error = create_blueprint_widget(
+        owner, "menu_guide_class", MENU_GUIDE_PACKAGE, MENU_GUIDE_CLASS
+    )
+    if not is_valid_object(host) then
+        return nil, "narration_host_create=" .. compact(create_error)
+    end
+    local tree = unwrap(read_raw_field(host, "WidgetTree"))
+    local root = unwrap(read_raw_field(tree, "RootWidget"))
+    if not is_valid_object(root) or not class_name(root):find("Overlay", 1, true) then
+        return nil, "narration_host_root_unavailable"
+    end
+    local ready, reason = pcall(function()
+        root:ClearChildren()
+        host.bIsFocusable = false
+        host:SetRenderOpacity(1.0)
+        host:SetVisibility(3) -- HitTestInvisible: neither the host nor its children take input.
+        host:AddToViewport(NARRATION_OVERLAY_Z_ORDER)
+        assert(host:IsInViewport(), "narration_host_not_in_viewport")
+    end)
+    if not ready then
+        pcall(function() host:RemoveFromParent() end)
+        return nil, "narration_host_attach=" .. compact(reason)
+    end
+    return host, nil
 end
 
 state.narration_is_open = function(owner)
@@ -3177,29 +3260,41 @@ state.sync_narration = function(context, preparing)
         return
     end
     local record = state.narration
-    if record ~= nil and record.overlay_owner_name == owner_name and record.page_key == page_key then
+    if record ~= nil and record.narration_owner_name == owner_name and record.page_key == page_key
+        and is_valid_object(state.narration_host)
+        and call_no_arg_raw(state.narration_host, "IsInViewport") == true then
         return -- State changes within one page must not reset the reading/scroll position.
     end
     state.clear_narration(false)
+    local host, host_error = state.create_narration_host(owner)
+    if not is_valid_object(host) then
+        if state.narration_error ~= host_error then
+            state.narration_error = host_error
+            log("narration_unavailable reason=" .. host_error)
+        end
+        return
+    end
+    state.narration_host = host
     record = {
         kind = "narration",
         segments = segments,
         page_key = page_key,
-        overlay_owner = owner,
-        overlay_owner_name = owner_name,
+        narration_owner_name = owner_name,
+        overlay_owner = host,
+        overlay_owner_name = full_name(host),
     }
     state.narration = record
     state.narration_error = ""
-    ensure_shortcut_hint(nil, owner, shortcut_hint_specs(false))
+    ensure_shortcut_hint(nil, host, shortcut_hint_specs(false))
     refresh_translation_overlay(record)
     refresh_analysis_overlay(record)
-    log(string.format("narration_ready segments=%d page=%s owner=%s", #segments, page_key, owner_name))
+    log(string.format("narration_ready segments=%d page=%s owner=%s host=%s", #segments, page_key, owner_name, full_name(host)))
 end
 
 state.scroll_narration = function(context, delta)
     local record = state.narration
-    if record == nil or full_name(unwrap(context)) ~= record.overlay_owner_name
-        or not state.narration_is_open(record.overlay_owner) then
+    if record == nil or full_name(unwrap(context)) ~= record.narration_owner_name
+        or not state.narration_is_open(state.narration_owner) then
         return
     end
     for _, widget in pairs({ translation = state.translation_widget, analysis = state.analysis_widget }) do
@@ -3945,58 +4040,110 @@ state.dialogue_text_key = function(texts)
     return table.concat(parts)
 end
 
+state.prepare_dialogue_index = function()
+    -- Pure Lua/file work only. Partial indices stay local until every language is complete.
+    local source_index = {}
+    for _, language in ipairs(TRANSLATION_LANGUAGES) do
+        local data = load_official_translation_data(language, "dialogue", true)
+        if data == nil then
+            state.dialogue_source_error = "dialogue_source_data_unavailable"
+            return
+        end
+        for row_name, row in pairs(data) do
+            if row_name ~= "__source_to_label" then
+                local key = state.dialogue_text_key(row)
+                if key ~= nil then
+                    local previous = source_index[key]
+                    if previous == nil then
+                        source_index[key] = row_name
+                    elseif type(previous) == "table" then
+                        previous[row_name] = true
+                    elseif previous ~= row_name then
+                        source_index[key] = { [previous] = true, [row_name] = true }
+                    end
+                end
+            end
+            state.data_load_checkpoint()
+        end
+    end
+    for key, matches in pairs(source_index) do
+        if type(matches) == "table" then
+            local candidates = {}
+            for row_name in pairs(matches) do
+                candidates[#candidates + 1] = row_name
+                state.data_load_checkpoint()
+            end
+            table.sort(candidates)
+            source_index[key] = candidates
+        end
+        state.data_load_checkpoint()
+    end
+    state.dialogue_source_index = source_index
+end
+
+state.start_dialogue_data_load = function()
+    if state.dialogue_load_started then return end
+    state.dialogue_load_started = true
+    state.dialogue_load_job = coroutine.create(function()
+        state.prepare_dialogue_index()
+        load_analysis_data(true)
+    end)
+    LoopAsync(10, function()
+        state.dialogue_load_items = 0
+        state.dialogue_load_deadline = os.clock() + state.dialogue_load_limits.seconds
+        local ok, reason = coroutine.resume(state.dialogue_load_job)
+        if ok and coroutine.status(state.dialogue_load_job) ~= "dead" then
+            return false
+        end
+        if not ok then
+            if state.dialogue_load_file ~= nil then
+                pcall(function() state.dialogue_load_file:close() end)
+                state.dialogue_load_file = nil
+            end
+            state.dialogue_load_error = "dialogue_data_load_failed"
+            if state.dialogue_source_index == nil then
+                state.dialogue_source_error = state.dialogue_load_error
+            end
+            log("dialogue_data_load_failed reason=" .. compact(reason))
+        end
+        state.dialogue_load_job = nil
+        log(string.format("dialogue_data_load_finished source=%s analysis=%s",
+            tostring(state.dialogue_source_index ~= nil), tostring(state.analysis_data ~= nil)))
+        -- Do not capture a record/owner across loading; it may have changed or closed.
+        ExecuteInGameThread(function()
+            if not state.translation_visible and not state.analysis_visible then return end
+            local record = state.active_record()
+            if record == nil then
+                detach_translation_widget()
+                detach_analysis_widget()
+                return
+            end
+            refresh_translation_overlay(record)
+            refresh_analysis_overlay(record)
+        end)
+        return true -- No polling after preparation succeeds or fails.
+    end)
+end
+
 state.match_dialogue_text = function(texts, index, voice_names)
     if texts == nil or index < 1 or index > #texts or index % 1 ~= 0 then
         return nil, "dialogue_text_index_unavailable"
     end
     local voice_label = voice_names ~= nil and exact_string(voice_names[index] or voice_names[1]) or ""
-    if voice_label ~= "" and voice_label ~= "None" then
-        return voice_label, nil
-    end
-
     if state.dialogue_source_error ~= nil then
         return nil, state.dialogue_source_error
     end
     if state.dialogue_source_index == nil then
-        -- Native Blueprint function-library hooks are unstable on UE4SS 3.0.1.
-        -- Read only populated TalkText fields; resolve unvoiced lines from local TSV data.
-        local source_index = {}
-        for _, language in ipairs(TRANSLATION_LANGUAGES) do
-            local data = load_official_translation_data(language, "dialogue")
-            if data == nil then
-                state.dialogue_source_error = "dialogue_source_data_unavailable"
-                return nil, state.dialogue_source_error
-            end
-            for row_name, row in pairs(data) do
-                if row_name ~= "__source_to_label" then
-                    local key = state.dialogue_text_key(row)
-                    if key ~= nil then
-                        local previous = source_index[key]
-                        if previous == nil then
-                            source_index[key] = row_name
-                        elseif type(previous) == "table" then
-                            previous[row_name] = true
-                        elseif previous ~= row_name then
-                            source_index[key] = { [previous] = true, [row_name] = true }
-                        end
-                    end
-                end
-            end
-        end
-        for key, matches in pairs(source_index) do
-            if type(matches) == "table" then
-                local candidates = {}
-                for row_name in pairs(matches) do
-                    candidates[#candidates + 1] = row_name
-                end
-                table.sort(candidates)
-                source_index[key] = candidates
-            end
-        end
-        state.dialogue_source_index = source_index
+        return nil, "dialogue_data_pending"
     end
     local matches = state.dialogue_source_index[state.dialogue_text_key(texts)]
     if type(matches) == "table" then
+        -- A voice label is only a hint among rows with the same complete source text.
+        for _, candidate in ipairs(matches) do
+            if candidate == voice_label then
+                return candidate, nil
+            end
+        end
         return nil, nil, matches
     end
     if matches == nil then
@@ -4584,6 +4731,7 @@ local function replay_previous_line()
 end
 
 log("loaded version=" .. VERSION .. "; in-place native replay, official translation, and dialogue analysis")
+state.start_dialogue_data_load()
 state.hooks_ready = install_pending_hooks()
 state.hook_retry_queued = false
 LoopAsync(2000, function()
