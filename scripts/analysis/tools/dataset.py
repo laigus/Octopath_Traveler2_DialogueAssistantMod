@@ -1,6 +1,8 @@
 import argparse
 import hashlib
 import json
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 
@@ -221,17 +223,27 @@ def validate_input_item(
     return item["id"], item["source_hash"]
 
 
-def read_identities(path: Path, result: bool, language: str) -> list[tuple[str, str]]:
-    identities: list[tuple[str, str]] = []
+def iter_jsonl(path: Path) -> Iterator[tuple[int, object]]:
     with path.open("r", encoding="utf-8") as source:
         for line_number, line in enumerate(source, start=1):
             if not line.strip():
                 continue
-            item = json.loads(line)
-            if result:
-                identities.append(validate_result_item(item, path, line_number, language))
-            else:
-                identities.append(validate_input_item(item, path, line_number, language))
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise RuntimeError(
+                    f"{path}:{line_number}:{error.colno} invalid JSON: {error.msg}"
+                ) from error
+            yield line_number, item
+
+
+def read_identities(path: Path, result: bool, language: str) -> list[tuple[str, str]]:
+    identities: list[tuple[str, str]] = []
+    for line_number, item in iter_jsonl(path):
+        if result:
+            identities.append(validate_result_item(item, path, line_number, language))
+        else:
+            identities.append(validate_input_item(item, path, line_number, language))
     return identities
 
 
@@ -272,12 +284,7 @@ def validate_results(args: argparse.Namespace) -> None:
 
 
 def read_jsonl(path: Path) -> list[object]:
-    rows: list[object] = []
-    with path.open("r", encoding="utf-8") as source:
-        for line in source:
-            if line.strip():
-                rows.append(json.loads(line))
-    return rows
+    return [item for _, item in iter_jsonl(path)]
 
 
 def format_analysis(item: dict[str, object], language: str) -> str:
@@ -357,8 +364,13 @@ def build_runtime_analysis(args: argparse.Namespace) -> None:
                 seen.add((row_name, text_index))
                 runtime_rows.append((row_name, text_index, text))
             used_batches += 1
-        except (OSError, ValueError, TypeError, KeyError, RuntimeError, json.JSONDecodeError):
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
             invalid_batches += 1
+            print(
+                f"analysis_invalid_batch={batch['id']} input={input_path} "
+                f"result={result_path} reason={error}",
+                file=sys.stderr,
+            )
 
     if args.require_complete and (missing_batches or invalid_batches):
         raise RuntimeError(
