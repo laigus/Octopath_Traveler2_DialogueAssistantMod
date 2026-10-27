@@ -173,6 +173,7 @@ local state = {
     dialogue_source_index = nil,
     dialogue_source_error = nil,
     dialogue_load_job = nil,
+    dialogue_load_queued = false,
     dialogue_load_file = nil,
     dialogue_load_error = nil,
     dialogue_load_limits = { seconds = 0.002, items = 1024 },
@@ -191,6 +192,11 @@ local state = {
 }
 
 local function log(message)
+    if coroutine.running() == state.dialogue_load_job then
+        -- UE4SS's print bridge only accepts its own registered Lua threads.
+        coroutine.yield(message)
+        return
+    end
     print(string.format("[%s] %s\n", MOD_NAME, message))
 end
 
@@ -4088,12 +4094,16 @@ state.start_dialogue_data_load = function()
         state.prepare_dialogue_index()
         load_analysis_data(true)
     end)
-    LoopAsync(10, function()
+    local function advance_load()
         state.dialogue_load_items = 0
         state.dialogue_load_deadline = os.clock() + state.dialogue_load_limits.seconds
         local ok, reason = coroutine.resume(state.dialogue_load_job)
+        if ok and reason ~= nil then
+            log(reason)
+        end
         if ok and coroutine.status(state.dialogue_load_job) ~= "dead" then
-            return false
+            state.dialogue_load_queued = false
+            return
         end
         if not ok then
             if state.dialogue_load_file ~= nil then
@@ -4107,21 +4117,28 @@ state.start_dialogue_data_load = function()
             log("dialogue_data_load_failed reason=" .. compact(reason))
         end
         state.dialogue_load_job = nil
+        state.dialogue_load_queued = false
         log(string.format("dialogue_data_load_finished source=%s analysis=%s",
             tostring(state.dialogue_source_index ~= nil), tostring(state.analysis_data ~= nil)))
         -- Do not capture a record/owner across loading; it may have changed or closed.
-        ExecuteInGameThread(function()
-            if not state.translation_visible and not state.analysis_visible then return end
-            local record = state.active_record()
-            if record == nil then
-                detach_translation_widget()
-                detach_analysis_widget()
-                return
-            end
-            refresh_translation_overlay(record)
-            refresh_analysis_overlay(record)
-        end)
-        return true -- No polling after preparation succeeds or fails.
+        if not state.translation_visible and not state.analysis_visible then return end
+        local record = state.active_record()
+        if record == nil then
+            detach_translation_widget()
+            detach_analysis_widget()
+            return
+        end
+        refresh_translation_overlay(record)
+        refresh_analysis_overlay(record)
+    end
+    LoopAsync(10, function()
+        if state.dialogue_load_job == nil then return true end
+        if not state.dialogue_load_queued then
+            -- Keep parsing/GC on the game thread, serial with the dialogue hooks.
+            state.dialogue_load_queued = true
+            ExecuteInGameThread(advance_load)
+        end
+        return false
     end)
 end
 
